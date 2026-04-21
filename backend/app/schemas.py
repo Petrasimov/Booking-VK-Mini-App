@@ -7,7 +7,7 @@ ErrorReport        — отчёт об ошибке с фронтенда.
 """
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-from datetime import date as Date, time as Time
+from datetime import date as Date, time as Time, datetime
 import re
 
 
@@ -60,3 +60,54 @@ class ErrorReport(BaseModel):
     message: str = Field(max_length=2000)
     details: str | None = Field(default=None, max_length=5000)
     source: str = Field(default="frontend", max_length=20)
+
+# ─────────────────────────────────────────────
+# Схемы для заведения
+# ─────────────────────────────────────────────
+
+class PlanLimitsResponse(BaseModel):
+    """Информация о лимитах текущего тарифа."""
+    bookings_per_month: int | None = None  # None = безлимит
+    bookings_used_this_month: int = 0
+    history_days: int | None = None        # None = вся история
+    export_enabled: bool = False
+    locations: int = 1
+
+
+class VenueConfigResponse(BaseModel):
+    """
+    Ответ GET /api/config — всё необходимое фронтенду при старте.
+
+    Если заведение не зарегистрировано — is_registered: false,
+    остальные поля отсутствуют. Фронтенд показывает онбординг.
+    """
+    is_registered: bool
+
+    # Поля ниже присутствуют только если is_registered: true
+    venue_id: int | None = None
+    name: str | None = None
+    category: str | None = None
+    timezone: str | None = None
+    plan: str | None = None
+    plan_expires_at: datetime | None = None
+    plan_limits: PlanLimitsResponse | None = None
+    config: dict | None = None
+
+
+class VenueRegisterRequest(BaseModel):
+    """Данные для регистрации нового заведения (POST /api/venue/register)."""
+    name: str = Field(min_length=2, max_length=200)
+    category: str = Field(min_length=2, max_length=50)
+    address: str | None = Field(default=None, max_length=500)
+    phone: str | None = Field(default=None, max_length=30)
+    timezone: str = Field(default="Europe/Moscow", max_length=50)
+    config: dict | None = None  # если None — берётся шаблон по умолчанию
+
+
+class VenueConfigUpdateRequest(BaseModel):
+    """Данные для обновления конфига заведения (PATCH /api/venue/config)."""
+    config: dict
+    name: str | None = Field(default=None, min_length=2, max_length=200)
+    address: str | None = Field(default=None, max_length=500)
+    phone: str | None = Field(default=None, max_length=30)
+    timezone: str | None = Field(default=None, max_length=50)

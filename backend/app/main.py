@@ -187,6 +187,78 @@ async def get_db():
     async with AsyncSessionLocal() as db:
         yield db
 
+# ===============================
+# Dependency: получение текущего заведения
+# ===============================
+from app.schemas import VenueConfigResponse, PlanLimitsResponse
+from app.venue_templates import VENUE_CATEGORIES
+
+def get_venue(request: Request):
+    """Возвращает venue из request.state или None."""
+    return getattr(request.state, "venue", None)
+
+
+def require_venue(request: Request):
+    """Возвращает venue или бросает 404 если не зарегистрировано."""
+    venue = getattr(request.state, "venue", None)
+    if venue is None:
+        raise HTTPException(status_code=404, detail="venue_not_found")
+    return venue
+
+
+# ===============================
+# GET /api/config — конфиг заведения для фронтенда
+# ===============================
+@app.get("/api/config", tags=["Заведение"])
+async def get_venue_config(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Возвращает конфиг заведения по vk_group_id из заголовка X-VK-Group-ID.
+    Если заведение не зарегистрировано — возвращает is_registered: false.
+    Фронтенд использует этот ответ для рендера формы или онбординга.
+    """
+    venue = getattr(request.state, "venue", None)
+
+    if venue is None:
+        return VenueConfigResponse(is_registered=False)
+
+    # Считаем брони за текущий месяц
+    from datetime import date
+    from sqlalchemy import extract
+    today = date.today()
+    used_this_month = (await db.execute(
+        select(func.count()).select_from(Reservation).where(
+            Reservation.venue_id == venue.id,
+            extract("year",  Reservation.date) == today.year,
+            extract("month", Reservation.date) == today.month,
+        )
+    )).scalar() or 0
+
+    # Лимиты по тарифу
+    from app.plan_limits import PLAN_LIMITS
+    limits = PLAN_LIMITS.get(venue.plan, PLAN_LIMITS["free"])
+
+    plan_limits = PlanLimitsResponse(
+        bookings_per_month=limits["bookings_per_month"],
+        bookings_used_this_month=used_this_month,
+        history_days=limits["history_days"],
+        export_enabled=limits["export"],
+        locations=limits["locations"],
+    )
+
+    return VenueConfigResponse(
+        is_registered=True,
+        venue_id=venue.id,
+        name=venue.name,
+        category=venue.category,
+        timezone=venue.timezone,
+        plan=venue.plan,
+        plan_expires_at=venue.plan_expires_at,
+        plan_limits=plan_limits,
+        config=venue.config,
+    )
 
 # ===============================
 # Rate Limiting
