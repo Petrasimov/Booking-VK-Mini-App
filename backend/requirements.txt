@@ -1,0 +1,20 @@
+fastapi==0.128.0
+uvicorn==0.40.0
+sqlalchemy==2.0.46
+psycopg2-binary==2.9.11
+asyncpg
+pydantic==2.12.5
+httpx
+python-dotenv
+matplotlib==3.10.0
+alembic==1.16.1
+pytest
+pytest-asyncio
+sentry-sdk[fastapi]
+prometheus-fastapi-instrumentator
+
+# dev/testing
+aiosqlite
+pytest-benchmark
+psutil
+locust

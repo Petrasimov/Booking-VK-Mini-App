@@ -1,0 +1,30 @@
+# Environment variables — never commit
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# Test artifacts
+.pytest_cache/
+test.db
+*.db
+
+# Logs
+*.log
+
+# Temporary chart/export files
+/tmp/
+*.png
+*.csv
+
+# Test artifacts
+report_*.txt
+testcases.xlsx
+
+# Binaries / large files
+*.exe

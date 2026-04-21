@@ -1,0 +1,102 @@
+/* =========================================
+   Глобальные стили VK Mini App
+   ========================================= */
+
+/* Reset */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html, body, #root {
+  margin: 0;
+  padding: 0;
+  width: 100%;
+  height: 100%;
+}
+
+/* Контент панели — скролл внутри, не снаружи */
+.vkuiPanel__in > .vkuiGroup {
+  max-height: 85vh;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* =========================================
+   Адаптивность: мобильные устройства
+   ========================================= */
+@media (max-width: 480px) {
+  /* На маленьких экранах — больше высоты для формы */
+  .vkuiPanel__in > .vkuiGroup {
+    max-height: 90vh;
+  }
+
+  /* Горизонтальные группы полей — в колонку на мобильных */
+  .vkuiFormLayoutGroup--mode-horizontal {
+    flex-direction: column;
+  }
+
+  .vkuiFormLayoutGroup--mode-horizontal > .vkuiFormItem {
+    width: 100%;
+    padding-left: 0;
+    padding-right: 0;
+  }
+}
+
+/* =========================================
+   Адаптивность: планшеты
+   ========================================= */
+@media (min-width: 481px) and (max-width: 768px) {
+  .vkuiPanel__in > .vkuiGroup {
+    max-height: 88vh;
+  }
+}
+
+/* =========================================
+   Адаптивность: десктоп (широкие экраны)
+   ========================================= */
+@media (min-width: 769px) {
+  .vkuiPanel__in > .vkuiGroup {
+    max-width: 560px;
+    margin: 0 auto;
+  }
+}
+
+/* =========================================
+   Анимации модальных окон
+   ========================================= */
+/* Белый фон страницы — убирает серость VKUI Panel */
+.vkuiPanel__in {
+  background: var(--vkui--color_background_content, #ffffff);
+}
+
+@keyframes fadeSlideIn {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+/* Плавное появление контента ModalCard */
+.vkuiModalCard__content,
+.vkuiModalCardBase__container {
+  animation: fadeSlideIn 0.22s ease-out;
+}
+
+/* Плавные переходы интерактивных элементов формы */
+.vkuiInput__el,
+.vkuiTextarea__el,
+.vkuiSelect__el {
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+/* Плавное выделение при фокусе */
+.vkuiInput--focused .vkuiInput__el,
+.vkuiTextarea--focused .vkuiTextarea__el {
+  box-shadow: 0 0 0 2px var(--vkui--color_stroke_accent_themed, rgba(0, 119, 255, 0.35));
+}
