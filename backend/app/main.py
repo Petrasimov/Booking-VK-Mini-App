@@ -42,7 +42,8 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 
 from app.schemas import ReservationCreate, ReservationResponse, ErrorReport
 from app.database import SessionLocal, engine, Base, AsyncSessionLocal
-from app.models import Reservation, ScheduledTask, ErrorLog, RateLimitEntry
+from app.models import Reservation, ScheduledTask, ErrorLog, RateLimitEntry, Venue
+from app.middleware import TenantMiddleware
 from app.vk_bot import (
     send_vk_message,
     build_confirmation_message,
@@ -73,8 +74,8 @@ if SENTRY_DSN:
     logger.info("Sentry initialized (environment=%s)", os.getenv("APP_ENV", "production"))
 
 app = FastAPI(
-    title="Shokoladnitsa Booking API",
-    description="API для системы бронирования столиков кафе Shokoladnitsa (VK Mini App)",
+    title="Booking VK Mini App API",
+    description="Универсальная система онлайн-бронирования для ВКонтакте",
     version="1.0.0",
     docs_url="/api/docs",
     redoc_url="/api/redoc",
@@ -151,6 +152,7 @@ class RequestSizeLimitMiddleware:
 
 app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(RequestSizeLimitMiddleware)
+app.add_middleware(TenantMiddleware)
 
 # --- CORS: разрешены только доверенные источники ---
 # В .env добавьте CORS_ORIGIN=https://ваш-домен.ru для production
