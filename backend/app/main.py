@@ -41,6 +41,7 @@ from starlette.datastructures import MutableHeaders
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from app.schemas import ReservationCreate, ReservationResponse, ErrorReport
+from app.routers import venue as venue_router
 from app.database import SessionLocal, engine, Base, AsyncSessionLocal
 from app.models import Reservation, ScheduledTask, ErrorLog, RateLimitEntry, Venue
 from app.middleware import TenantMiddleware
@@ -84,6 +85,7 @@ app = FastAPI(
 
 # --- Prometheus метрики — GET /api/metrics/prometheus ---
 Instrumentator().instrument(app).expose(app, endpoint="/api/metrics/prometheus")
+app.include_router(venue_router.router)
 
 
 # ===============================
