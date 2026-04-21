@@ -184,10 +184,7 @@ app.add_middleware(
 # ===============================
 # Dependency: async сессия БД
 # ===============================
-async def get_db():
-    """Создаёт AsyncSession на время запроса, закрывает после."""
-    async with AsyncSessionLocal() as db:
-        yield db
+from app.deps import get_db  # noqa: F401 — реэкспорт для dependency_overrides
 
 # ===============================
 # Dependency: получение текущего заведения

@@ -7,14 +7,15 @@ TenantMiddleware — определяет заведение по vk_group_id и
 Логика:
     1. Читаем vk_group_id из заголовка X-VK-Group-ID или query-параметра group_id
     2. Проверяем LRU-кэш (TTL 5 минут, до 200 заведений)
-    3. Если не в кэше — запрашиваем из БД
-    4. Если не найдено — возвращаем 404
+    3. Если не в кэше — запрашиваем из AsyncSession
+    4. Если не найдено — venue остаётся None (не 404, эндпоинты сами решают)
     5. Если найдено — кладём venue в request.state и продолжаем
 
 Исключения (проходят без проверки tenant):
     - /api/health
     - /api/metrics
     - /docs, /redoc, /openapi.json
+    - /api/venue/register
 """
 
 from __future__ import annotations
@@ -25,28 +26,49 @@ from typing import Any
 
 from fastapi import Request
 from fastapi.responses import JSONResponse
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from starlette.middleware.base import BaseHTTPMiddleware
-from sqlalchemy.orm import Session
 
-from app.database import SessionLocal
 from app.models import Venue
 
 logger = logging.getLogger(__name__)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Patchable session factory — заменяется в тестах на SQLite
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _get_async_session_factory() -> async_sessionmaker:
+    """
+    Возвращает фабрику сессий.
+    Lazy import чтобы избежать циклических импортов.
+    В тестах заменяется через: middleware._session_factory = TestingFactory
+    """
+    from app.database import AsyncSessionLocal
+    return AsyncSessionLocal
+
+
+# Модуль-уровневая переменная — заменяема в тестах
+_session_factory: async_sessionmaker | None = None
+
+
+def _get_session_factory() -> async_sessionmaker:
+    global _session_factory
+    if _session_factory is None:
+        _session_factory = _get_async_session_factory()
+    return _session_factory
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Простой LRU-кэш с TTL
 # ─────────────────────────────────────────────────────────────────────────────
 
 class _TTLCache:
-    """
-    Простой кэш с TTL и ограничением по размеру.
-    Не требует внешних зависимостей.
-
-    При превышении max_size удаляет самую старую запись.
-    """
+    """Простой кэш с TTL и ограничением по размеру."""
 
     def __init__(self, max_size: int = 200, ttl_seconds: int = 300):
-        self._store: dict[int, tuple[Any, float]] = {}  # key → (value, expire_at)
+        self._store: dict[int, tuple[Any, float]] = {}
         self._max_size   = max_size
         self._ttl        = ttl_seconds
 
@@ -62,17 +84,16 @@ class _TTLCache:
 
     def set(self, key: int, value: Any) -> None:
         if len(self._store) >= self._max_size:
-            # Удаляем самую старую запись
             oldest_key = next(iter(self._store))
             del self._store[oldest_key]
         self._store[key] = (value, time.monotonic() + self._ttl)
 
     def invalidate(self, key: int) -> None:
-        """Явно сбросить кэш для конкретного заведения (при обновлении конфига)."""
+        """Явно сбросить кэш для заведения (при обновлении конфига)."""
         self._store.pop(key, None)
 
 
-# Глобальный кэш — один на весь процесс
+# Глобальный кэш
 _venue_cache = _TTLCache(max_size=200, ttl_seconds=300)
 
 
@@ -87,12 +108,20 @@ _EXEMPT_PATHS = {
     "/docs",
     "/redoc",
     "/openapi.json",
+    "/api/docs",
+    "/api/redoc",
+    "/api/openapi.json",
 }
 
 
 def _is_exempt(path: str) -> bool:
-    """Возвращает True если путь не требует проверки tenant."""
-    return path in _EXEMPT_PATHS or path.startswith("/api/venue/register")
+    if path in _EXEMPT_PATHS:
+        return True
+    if path.startswith("/api/venue/register"):
+        return True
+    if path.startswith("/api/templates"):
+        return True
+    return False
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -111,6 +140,7 @@ class TenantMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         # Пропускаем служебные пути
         if _is_exempt(request.url.path):
+            request.state.venue = None
             return await call_next(request)
 
         # 1. Получаем group_id
@@ -120,8 +150,6 @@ class TenantMiddleware(BaseHTTPMiddleware):
         )
 
         if not raw:
-            # group_id не передан — продолжаем без venue
-            # (эндпоинты которым он нужен сами вернут ошибку через get_venue())
             request.state.venue = None
             return await call_next(request)
 
@@ -136,25 +164,29 @@ class TenantMiddleware(BaseHTTPMiddleware):
         # 2. Проверяем кэш
         venue = _venue_cache.get(group_id)
 
-        # 3. Если не в кэше — идём в БД
+        # 3. Если не в кэше — идём в БД (async)
         if venue is None:
-            db: Session = SessionLocal()
             try:
-                venue = (
-                    db.query(Venue)
-                    .filter(Venue.vk_group_id == group_id, Venue.is_active == True)
-                    .first()
-                )
-            finally:
-                db.close()
+                factory = _get_session_factory()
+                async with factory() as db:
+                    result = await db.execute(
+                        select(Venue).where(
+                            Venue.vk_group_id == group_id,
+                            Venue.is_active == True,
+                        )
+                    )
+                    venue = result.scalar_one_or_none()
 
-            if venue is not None:
-                _venue_cache.set(group_id, venue)
-                logger.debug("Venue %d loaded from DB and cached", group_id)
-            else:
-                logger.debug("Venue with group_id=%d not found", group_id)
+                if venue is not None:
+                    _venue_cache.set(group_id, venue)
+                    logger.debug("Venue %d loaded from DB and cached", group_id)
+                else:
+                    logger.debug("Venue with group_id=%d not found", group_id)
+            except Exception as e:
+                logger.error("TenantMiddleware DB error for group_id=%d: %s", group_id, e)
+                venue = None
 
-        # 4. Кладём venue в request.state (может быть None если не зарегистрировано)
+        # 4. Кладём venue в request.state (может быть None)
         request.state.venue = venue
 
         return await call_next(request)
@@ -165,9 +197,6 @@ class TenantMiddleware(BaseHTTPMiddleware):
 # ─────────────────────────────────────────────────────────────────────────────
 
 def invalidate_venue_cache(vk_group_id: int) -> None:
-    """
-    Сбросить кэш для заведения.
-    Вызывать после обновления конфига через PATCH /api/venue/config.
-    """
+    """Сбросить кэш для заведения после обновления конфига."""
     _venue_cache.invalidate(vk_group_id)
     logger.info("Cache invalidated for vk_group_id=%d", vk_group_id)

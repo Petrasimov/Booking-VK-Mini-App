@@ -17,7 +17,6 @@ from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import AsyncSessionLocal
 from app.middleware import invalidate_venue_cache
@@ -44,9 +43,7 @@ router = APIRouter(prefix="/api", tags=["Заведение"])
 # Dependency: async сессия БД
 # ─────────────────────────────────────────────
 
-async def get_db():
-    async with AsyncSessionLocal() as db:
-        yield db
+from app.deps import get_db
 
 
 # ─────────────────────────────────────────────
