@@ -267,3 +267,160 @@ async def send_waiters_confirmation_request(
     keyboard = create_confirmation_keyboard(reservation_id)
     logger.info("Sending confirmation request for reservation #%d", reservation_id)
     return await send_vk_chat_message(message, keyboard)
+
+# ===============================
+# Мультитенантные функции (принимают token и chat_id из конфига заведения)
+# ===============================
+
+async def send_vk_chat_message_with_token(
+    token: str, chat_id: int, message: str, keyboard: dict = None
+) -> bool:
+    """
+    Отправляет сообщение в чат заведения используя его токен.
+    Используется в мультитенантном режиме вместо send_vk_chat_message().
+    """
+    if not token or not chat_id:
+        logger.warning("send_vk_chat_message_with_token: token or chat_id missing")
+        return False
+
+    try:
+        params = {
+            "peer_id": int(chat_id),
+            "message": message,
+            "random_id": random.randint(1, 2**31),
+            "access_token": token,
+            "v": VK_API_VERSION,
+        }
+        if keyboard:
+            params["keyboard"] = json.dumps(keyboard, ensure_ascii=False)
+
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            response = await client.post(VK_API_URL, data=params)
+            data = response.json()
+
+        if "error" in data:
+            logger.error("VK chat error (peer=%d): %s", chat_id, data["error"])
+            return False
+
+        logger.info("Message sent to chat (peer=%d)", chat_id)
+        return True
+
+    except Exception as e:
+        logger.error("Failed to send to chat %d: %s", chat_id, e)
+        return False
+
+
+async def send_vk_message_with_token(
+    token: str, user_id: int, message: str
+) -> bool:
+    """
+    Отправляет личное сообщение гостю используя токен заведения.
+    Используется в мультитенантном режиме.
+    """
+    if not token or not user_id:
+        logger.warning("send_vk_message_with_token: token or user_id missing")
+        return False
+
+    params = {
+        "user_id": user_id,
+        "message": message,
+        "random_id": random.randint(1, 2**31),
+        "access_token": token,
+        "v": VK_API_VERSION,
+    }
+
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                response = await client.post(VK_API_URL, data=params)
+                data = response.json()
+
+            if "error" in data:
+                code = data["error"].get("error_code")
+                msg  = data["error"].get("error_msg")
+                logger.error("VK API error (user=%d, attempt=%d): code=%s msg=%s",
+                             user_id, attempt, code, msg)
+                if code in (901, 7, 15):
+                    return False
+                continue
+
+            logger.info("VK message sent to user %d (attempt %d)", user_id, attempt)
+            return True
+
+        except Exception as e:
+            logger.error("VK request failed (user=%d, attempt=%d): %s", user_id, attempt, e)
+
+    return False
+
+
+async def notify_venue_new_reservation(
+    venue,
+    name: str, guests: int, phone: str,
+    date: str, time: str,
+    reservation_id: int,
+    comment: str = "",
+    extra_data: dict = None,
+) -> bool:
+    """
+    Уведомляет чат заведения о новой брони используя конфиг заведения.
+    Заменяет send_waiters_new_reservation() в мультитенантном режиме.
+    """
+    token   = venue.config.get("vk_group_token")
+    chat_id = venue.config.get("notifications_chat_id")
+
+    if not token or not chat_id:
+        logger.warning(
+            "Venue %d: notifications not configured (token=%s, chat_id=%s)",
+            venue.id, bool(token), bool(chat_id)
+        )
+        return False
+
+    message = (
+        f"📋 НОВАЯ БРОНЬ\n\n"
+        f"👤 Имя: {name}\n"
+        f"👥 Гостей: {guests}\n"
+        f"📱 Телефон: {phone}\n"
+        f"📅 Дата: {date}\n"
+        f"⏰ Время: {time}\n"
+    )
+    if comment:
+        message += f"💬 Комментарий: {comment}\n"
+
+    # Дополнительные поля ниши (мастер, услуга и т.д.)
+    if extra_data:
+        labels = {
+            "service": "Услуга",
+            "master":  "Мастер",
+            "zone":    "Зона",
+        }
+        for key, label in labels.items():
+            if key in extra_data:
+                message += f"▸ {label}: {extra_data[key]}\n"
+
+    message += f"\n🆔 Бронь #{reservation_id}"
+
+    return await send_vk_chat_message_with_token(token, chat_id, message)
+
+
+async def notify_venue_confirmation_request(
+    venue,
+    name: str, guests: int, time: str, reservation_id: int,
+) -> bool:
+    """
+    Отправляет запрос подтверждения прихода в чат заведения.
+    """
+    token   = venue.config.get("vk_group_token")
+    chat_id = venue.config.get("notifications_chat_id")
+
+    if not token or not chat_id:
+        return False
+
+    message = (
+        f"☕ ГОСТЬ ДОЛЖЕН ПРИЙТИ\n\n"
+        f"👤 {name}\n"
+        f"👥 Гостей: {guests}\n"
+        f"⏰ Время: {time}\n\n"
+        f"Гость пришёл?"
+    )
+    keyboard = create_confirmation_keyboard(reservation_id)
+    return await send_vk_chat_message_with_token(token, chat_id, message, keyboard)
