@@ -1,15 +1,17 @@
 /**
  * Главная страница — обёртка для формы бронирования.
- * Содержит Group-контейнер из VKUI.
  */
 
 import { Group, Header } from '@vkontakte/vkui';
 import BookingForm from '../components/BookingForm'
 
-function Home({ onRequestConfirm, isSubmitting }) {
+function Home({ venueConfig, onRequestConfirm, isSubmitting }) {
+    const title = venueConfig?.welcome_text || '☕ Бронирование';
+
     return (
-        <Group header={<Header>☕ Шоколадница (Спасская 18)</Header>}>
+        <Group header={<Header>{title}</Header>}>
             <BookingForm
+                venueConfig={venueConfig}
                 onRequestConfirm={onRequestConfirm}
                 isSubmitting={isSubmitting}
             />

@@ -1,17 +1,18 @@
 /**
  * Корневой компонент приложения.
  *
+ * При старте загружает конфиг заведения (GET /api/config).
+ * Если заведение не зарегистрировано — показывает онбординг (TODO: Этап 4).
+ * Если зарегистрировано — передаёт venueConfig в форму бронирования.
+ *
  * Управляет модальными окнами:
  *   - welcome  — приветствие при первом открытии
  *   - confirm  — подтверждение данных перед отправкой
- *   - success  — успешное бронирование с данными
+ *   - success  — успешное бронирование
  *   - error    — сообщение об ошибке
- *
- * Логика отправки формы находится здесь (не в BookingForm),
- * чтобы показать окно подтверждения до реального запроса к API.
  */
 
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import {
     ConfigProvider,
     AppRoot,
@@ -19,7 +20,6 @@ import {
     SplitCol,
     View,
     Panel,
-
     ModalCard,
     Button,
     Text,
@@ -38,6 +38,7 @@ const RETRYABLE_STATUSES = new Set([500, 502, 503])
 
 /** Человекочитаемое сообщение по HTTP-статусу */
 function getErrorMessage(status, defaultMsg) {
+    if (status === 402) return 'Лимит бронирований на этот месяц исчерпан. Обратитесь к владельцу заведения.'
     if (status === 409) return 'Бронирование на этот день с таким телефоном уже существует.'
     if (status === 422) return 'Некорректные данные бронирования. Проверьте заполненные поля.'
     if (status === 429) return 'Слишком много запросов. Подождите минуту и попробуйте снова.'
@@ -46,50 +47,96 @@ function getErrorMessage(status, defaultMsg) {
     return defaultMsg || 'Не удалось отправить бронь. Попробуйте ещё раз.'
 }
 
+/** Получить group_id из URL-параметров VK */
+function getVkGroupId() {
+    const params = new URLSearchParams(window.location.search)
+    return params.get('vk_group_id') || params.get('group_id') || null
+}
+
 function App() {
-    // Читаем цветовую схему VK из URL-параметров (vk_color_scheme=space_gray/bright_light)
+    // Цветовая схема VK
     const vkColorScheme = new URLSearchParams(window.location.search).get('vk_color_scheme')
     const appearance = vkColorScheme === 'space_gray' ? 'dark' : 'light'
 
-    const [activeModal, setActiveModal] = useState('welcome')
+    // ── Конфиг заведения ──────────────────────────────────────────────────
+    const [venueConfig, setVenueConfig]   = useState(null)
+    const [configLoading, setConfigLoading] = useState(true)
+    const [isRegistered, setIsRegistered] = useState(true)
+
+    // ── Состояние формы и модалок ─────────────────────────────────────────
+    const [activeModal,     setActiveModal]     = useState('welcome')
     const [reservationData, setReservationData] = useState(null)
-    const [errorMessage, setErrorMessage] = useState('')
-    const [isSubmitting, setIsSubmitting] = useState(false)
-    const [canRetry, setCanRetry] = useState(false)
-
-    // Данные ожидающей отправки брони: { payload, displayData }
+    const [errorMessage,    setErrorMessage]    = useState('')
+    const [isSubmitting,    setIsSubmitting]    = useState(false)
+    const [canRetry,        setCanRetry]        = useState(false)
     const [pendingFormData, setPendingFormData] = useState(null)
+    const [formResetKey,    setFormResetKey]    = useState(0)
 
-    // Инкремент при успешной брони — заставляет BookingForm сброситься через key=
-    const [formResetKey, setFormResetKey] = useState(0)
-
-    // Счётчик retry-попыток (сбрасывается при каждом новом подтверждении)
     const retryCount = useRef(0)
+    const groupId    = getVkGroupId()
 
-    const openModal = (name) => setActiveModal(name)
+    // Сохраняем group_id глобально для BookingForm (VKWebAppAllowMessagesFromGroup)
+    if (groupId) window.vkGroupId = Number(groupId)
+
+    // ── Загрузка конфига заведения при старте ────────────────────────────
+    useEffect(() => {
+        const fetchConfig = async () => {
+            try {
+                const headers = {}
+                if (groupId) headers['X-VK-Group-ID'] = groupId
+
+                const res = await fetch('/api/config', { headers })
+                if (!res.ok) throw new Error(`HTTP ${res.status}`)
+
+                const data = await res.json()
+
+                if (!data.is_registered) {
+                    setIsRegistered(false)
+                    setConfigLoading(false)
+                    return
+                }
+
+                setVenueConfig(data.config)
+                setIsRegistered(true)
+
+                // Применяем акцентный цвет заведения
+                if (data.config?.accent_color) {
+                    document.documentElement.style.setProperty(
+                        '--accent-color',
+                        data.config.accent_color
+                    )
+                }
+            } catch (e) {
+                // При ошибке загрузки конфига — используем дефолтный
+                console.warn('Failed to load venue config:', e)
+                setVenueConfig(null)
+            } finally {
+                setConfigLoading(false)
+            }
+        }
+
+        fetchConfig()
+    }, [groupId])
+
+    const openModal  = (name) => setActiveModal(name)
     const closeModal = () => setActiveModal(null)
 
-    /**
-     * Вызывается из BookingForm после валидации.
-     * Показывает модальное окно подтверждения.
-     */
+    // ── Логика подтверждения и отправки ──────────────────────────────────
+
     const handleRequestConfirm = ({ payload, displayData }) => {
         retryCount.current = 0
         setPendingFormData({ payload, displayData })
         openModal('confirm')
     }
 
-    /** Пользователь нажал "Изменить данные" — возвращаемся к форме. */
     const handleCancelConfirm = () => {
         setPendingFormData(null)
         closeModal()
     }
 
-    /** Пользователь подтвердил бронирование — отправляем запрос к API. */
     const handleConfirmSubmit = async () => {
         if (!pendingFormData || isSubmitting) return
 
-        // Проверяем наличие сети до отправки
         if (!navigator.onLine) {
             setErrorMessage('Нет подключения к интернету. Проверьте соединение и попробуйте снова.')
             setCanRetry(false)
@@ -101,19 +148,22 @@ function App() {
         setIsSubmitting(true)
 
         const controller = new AbortController()
-        const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
+        const timeoutId  = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
+
+        // Добавляем group_id в заголовок запроса
+        const headers = { 'Content-Type': 'application/json' }
+        if (groupId) headers['X-VK-Group-ID'] = groupId
 
         try {
             const response = await fetch('/api/reservation', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(pendingFormData.payload),
-                signal: controller.signal,
+                method:  'POST',
+                headers,
+                body:    JSON.stringify(pendingFormData.payload),
+                signal:  controller.signal,
             })
 
             clearTimeout(timeoutId)
 
-            // 5xx — retry с exponential backoff
             if (RETRYABLE_STATUSES.has(response.status)) {
                 const attempt = retryCount.current
                 if (attempt < RETRY_DELAYS_MS.length) {
@@ -125,41 +175,39 @@ function App() {
                     )
                     setCanRetry(false)
                     openModal('error')
-                    setTimeout(() => {
-                        closeModal()
-                        handleConfirmSubmit()
-                    }, delay)
+                    setTimeout(() => { closeModal(); handleConfirmSubmit() }, delay)
                     return
                 }
-                // Все попытки исчерпаны
                 throw new Error('Сервер временно недоступен. Пожалуйста, попробуйте позже.')
             }
 
             if (!response.ok) {
-                throw Object.assign(new Error(getErrorMessage(response.status)), { status: response.status })
+                throw Object.assign(
+                    new Error(getErrorMessage(response.status)),
+                    { status: response.status }
+                )
             }
 
             const data = await response.json()
-
             setIsSubmitting(false)
             setReservationData(data)
             setPendingFormData(null)
             retryCount.current = 0
-            setFormResetKey((k) => k + 1)  // сбрасываем форму
+            setFormResetKey(k => k + 1)
             openModal('success')
 
         } catch (error) {
             clearTimeout(timeoutId)
             setIsSubmitting(false)
 
-            let message = error.message || 'Не удалось отправить бронь. Попробуйте ещё раз.'
+            let message   = error.message || 'Не удалось отправить бронь. Попробуйте ещё раз.'
             let showRetry = false
 
             if (error.name === 'AbortError') {
-                message = 'Превышено время ожидания. Проверьте соединение и попробуйте снова.'
+                message   = 'Превышено время ожидания. Проверьте соединение и попробуйте снова.'
                 showRetry = true
             } else if (!navigator.onLine) {
-                message = 'Соединение с сервером потеряно. Проверьте интернет и повторите попытку.'
+                message   = 'Соединение с сервером потеряно. Проверьте интернет и повторите попытку.'
                 showRetry = true
             }
 
@@ -169,12 +217,48 @@ function App() {
         }
     }
 
-    /** Повторная попытка из error modal */
-    const handleRetry = () => {
-        closeModal()
-        handleConfirmSubmit()
+    const handleRetry = () => { closeModal(); handleConfirmSubmit() }
+
+    // ── Загрузка конфига ─────────────────────────────────────────────────
+    if (configLoading) {
+        return (
+            <ConfigProvider appearance={appearance}>
+                <AppRoot>
+                    <ScreenSpinner />
+                </AppRoot>
+            </ConfigProvider>
+        )
     }
 
+    // ── Заведение не зарегистрировано — TODO Этап 4: онбординг ──────────
+    // Пока показываем заглушку
+    if (!isRegistered) {
+        return (
+            <ConfigProvider appearance={appearance}>
+                <AppRoot>
+                    <SplitLayout>
+                        <SplitCol autoSpaced>
+                            <View activePanel="stub">
+                                <Panel id="stub">
+                                    <div style={{ padding: 24, textAlign: 'center' }}>
+                                        <p>Заведение не подключено к системе бронирования.</p>
+                                        <p>Обратитесь к администратору группы для настройки.</p>
+                                    </div>
+                                </Panel>
+                            </View>
+                        </SplitCol>
+                    </SplitLayout>
+                </AppRoot>
+            </ConfigProvider>
+        )
+    }
+
+    // Текст успешного экрана из конфига или дефолт
+    const venueName    = venueConfig?.welcome_text || 'Шоколадницу'
+    const successTitle = `🎉 Бронирование подтверждено!`
+    const successDesc  = `Ждём вас! До встречи ☕`
+
+    // ── Основной рендер ──────────────────────────────────────────────────
     return (
         <ConfigProvider appearance={appearance}>
             <AppRoot>
@@ -184,6 +268,7 @@ function App() {
                             <Panel id='home'>
                                 <Home
                                     key={formResetKey}
+                                    venueConfig={venueConfig}
                                     onRequestConfirm={handleRequestConfirm}
                                     isSubmitting={isSubmitting}
                                 />
@@ -196,11 +281,11 @@ function App() {
                 <ModalCard
                     open={activeModal === 'welcome'}
                     onClose={closeModal}
-                    title="☕ Добро пожаловать в Шоколадницу!"
-                    description="🍰 Здесь вы можете быстро и удобно забронировать столик. Заполните форму — это займёт меньше минуты."
+                    title="👋 Добро пожаловать!"
+                    description="Заполните форму, чтобы забронировать место. Это займёт меньше минуты."
                     actions={
                         <Button size="l" mode="primary" stretched onClick={closeModal}>
-                            Отлично, приступим! ☕
+                            Отлично, приступим!
                         </Button>
                     }
                 />
@@ -210,16 +295,14 @@ function App() {
                     open={activeModal === 'confirm'}
                     onClose={handleCancelConfirm}
                     title="📋 Проверьте данные"
-                    description="Убедитесь, что всё верно, прежде чем подтвердить бронирование."
+                    description="Убедитесь, что всё верно, прежде чем подтвердить."
                     actions={
                         <>
                             <Button size="l" mode="primary" stretched onClick={handleConfirmSubmit}>
                                 ✅ Подтвердить
                             </Button>
                             <Button
-                                size="l"
-                                mode="secondary"
-                                stretched
+                                size="l" mode="secondary" stretched
                                 onClick={handleCancelConfirm}
                                 style={{ marginTop: 8 }}
                             >
@@ -231,12 +314,17 @@ function App() {
                     {pendingFormData && (
                         <Text>
                             <b>👤 Имя:</b> {pendingFormData.displayData.name}<br />
-                            <b>👥 Гостей:</b> {pendingFormData.displayData.guests}<br />
+                            {pendingFormData.displayData.guests != null && (
+                                <><b>👥 Гостей:</b> {pendingFormData.displayData.guests}<br /></>
+                            )}
                             <b>📱 Телефон:</b> {pendingFormData.displayData.phone}<br />
                             <b>📅 Дата:</b> {pendingFormData.displayData.date}<br />
                             <b>⏰ Время:</b> {pendingFormData.displayData.time}
+                            {pendingFormData.displayData.extra && (
+                                <><br />{pendingFormData.displayData.extra}</>
+                            )}
                             {pendingFormData.displayData.comment && (
-                                <><br /><b>💬 Комментарий:</b> {pendingFormData.displayData.comment}</>
+                                <><br /><b>💬</b> {pendingFormData.displayData.comment}</>
                             )}
                         </Text>
                     )}
@@ -246,26 +334,17 @@ function App() {
                 <ModalCard
                     open={activeModal === 'success'}
                     onClose={closeModal}
-                    title="🎉 Бронирование подтверждено!"
-                    description="🍰 Ждём вас в кафе «Шоколадница»! До встречи ☕"
+                    title={successTitle}
+                    description={successDesc}
                     actions={
-                        <Button
-                            size="l"
-                            stretched
-                            mode="commerce"
-                            component="a"
-                            href="https://vk.com/shokokirov?w=app5898182_-156166947"
-                            target="_blank"
-                        >
-                            🎁 Получить подарок
+                        <Button size="l" stretched mode="primary" onClick={closeModal}>
+                            Закрыть
                         </Button>
                     }
                 >
                     {reservationData && (
                         <Text>
                             <b>👤 Имя:</b> {reservationData.name}<br />
-                            <b>👥 Гостей:</b> {reservationData.guests}<br />
-                            <b>📱 Телефон:</b> {reservationData.phone}<br />
                             <b>📅 Дата:</b> {reservationData.date}<br />
                             <b>⏰ Время:</b> {reservationData.time}
                         </Text>
@@ -285,9 +364,7 @@ function App() {
                             </Button>
                             {canRetry && (
                                 <Button
-                                    size="l"
-                                    mode="secondary"
-                                    stretched
+                                    size="l" mode="secondary" stretched
                                     onClick={handleRetry}
                                     style={{ marginTop: 8 }}
                                 >

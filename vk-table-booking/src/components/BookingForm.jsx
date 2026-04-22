@@ -1,13 +1,20 @@
 /**
- * Форма бронирования столика.
+ * Форма бронирования — динамическая версия.
  *
- * Поля: имя, гостей, телефон, дата, время, комментарий.
- * Чекбоксы: согласие с пользовательским соглашением, согласие на обработку ПД,
- *            разрешение уведомлений (VK Bridge, опционально).
- * Уведомления — опциональны, бронирование работает и без них.
+ * Поля формы генерируются из venueConfig.fields:
+ *   - guests  — количество гостей (если enabled)
+ *   - service — тип услуги / Select (если enabled)
+ *   - master  — выбор мастера / Select (если enabled)
+ *   - zone    — зона / Select (если enabled)
+ *   - comment — комментарий (если enabled)
  *
- * После валидации вызывает onRequestConfirm({ payload, displayData }) —
- * фактическая отправка запроса происходит в App.jsx.
+ * Базовые поля (всегда): имя, телефон, дата, время.
+ * Чекбоксы (всегда): согласие с документами, уведомления (опционально).
+ *
+ * Props:
+ *   venueConfig     — объект конфига заведения из GET /api/config
+ *   onRequestConfirm({ payload, displayData }) — callback отправки
+ *   isSubmitting    — флаг загрузки
  */
 
 import { useState, useMemo } from 'react';
@@ -21,46 +28,33 @@ import {
     Select,
     FormLayoutGroup,
     DateInput,
-    IconButton,
 } from '@vkontakte/vkui';
-import { Icon24Dismiss } from '@vkontakte/icons';
 import {
     validateName,
-    validateGuests,
     validatePhone,
     validateDate,
     validateTime,
 } from '../utils/validators';
-import { TERMS_OF_USE_TEXT, USER_AGREEMENT_TEXT, PERSONAL_DATA_CONSENT_TEXT, PRIVACY_POLICY_TEXT } from '../utils/legalTexts';
+import {
+    TERMS_OF_USE_TEXT,
+    USER_AGREEMENT_TEXT,
+    PERSONAL_DATA_CONSENT_TEXT,
+    PRIVACY_POLICY_TEXT,
+} from '../utils/legalTexts';
 
-// Генерация слотов времени: 08:00, 08:30, ..., 20:00
-const ALL_TIME_SLOTS = (() => {
-    const slots = [];
-    for (let h = 8; h <= 20; h++) {
-        for (let m = 0; m < 60; m += 30) {
-            slots.push(`${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`);
-        }
-    }
-    return slots;
-})();
+// ─────────────────────────────────────────────
+// Вспомогательные функции (без изменений)
+// ─────────────────────────────────────────────
 
-/** Минимальная дата — сегодня (в формате YYYY-MM-DD) */
 const getTodayStr = () => new Date().toISOString().split('T')[0];
+const isToday = (dateStr) => !!dateStr && dateStr === getTodayStr();
 
-/** Проверяет, является ли строка датой сегодняшнего дня */
-const isToday = (dateStr) => {
-    if (!dateStr) return false;
-    return dateStr === getTodayStr();
-};
-
-/** Конвертирует строку YYYY-MM-DD в объект Date (полночь локального времени) */
 const dateStrToDate = (str) => {
     if (!str) return undefined;
     const [y, m, d] = str.split('-').map(Number);
     return new Date(y, m - 1, d);
 };
 
-/** Конвертирует объект Date в строку YYYY-MM-DD */
 const dateToStr = (date) => {
     if (!date) return '';
     const y = date.getFullYear();
@@ -69,61 +63,103 @@ const dateToStr = (date) => {
     return `${y}-${m}-${d}`;
 };
 
-/** Форматирует цифры телефона в читаемый вид: +7 (XXX) XXX-XX-XX */
 const formatPhone = (digits) => {
     if (digits.length === 0) return '+7';
-    if (digits.length < 3) return `+7 (${digits}`;
+    if (digits.length < 3)  return `+7 (${digits}`;
     if (digits.length === 3) return `+7 (${digits})`;
-    if (digits.length <= 6) return `+7 (${digits.slice(0, 3)}) ${digits.slice(3)}`;
-    if (digits.length <= 8) return `+7 (${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`;
+    if (digits.length <= 6)  return `+7 (${digits.slice(0, 3)}) ${digits.slice(3)}`;
+    if (digits.length <= 8)  return `+7 (${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6)}`;
     return `+7 (${digits.slice(0, 3)}) ${digits.slice(3, 6)}-${digits.slice(6, 8)}-${digits.slice(8, 10)}`;
 };
 
-const INITIAL_FORM = {
-    name: '',
-    guests: 1,
-    phone: '',
-    date: '',
-    time: '',
-    comment: '',
+// ─────────────────────────────────────────────
+// Конфиг по умолчанию (кафе) — используется если venueConfig не передан
+// ─────────────────────────────────────────────
+
+const DEFAULT_CONFIG = {
+    time_slots: (() => {
+        const slots = [];
+        for (let h = 8; h <= 20; h++)
+            for (let m = 0; m < 60; m += 30)
+                slots.push(`${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`);
+        return slots;
+    })(),
+    fields: {
+        guests:  { enabled: true,  required: true,  max: 8 },
+        comment: { enabled: true,  required: false },
+        service: { enabled: false, options: [] },
+        master:  { enabled: false, options: [] },
+        zone:    { enabled: false, options: [] },
+    },
+    welcome_text: 'Забронировать',
+    accent_color: '#FF6B35',
 };
+
+// ─────────────────────────────────────────────
+// Константы модальных окон
+// ─────────────────────────────────────────────
+
+const MODAL_TERMS_OF_USE   = 'modal-terms-of-use';
+const MODAL_PRIVACY_POLICY = 'modal-privacy-policy';
+const MODAL_PUBLIC_OFFER   = 'modal-public-offer';
+const MODAL_CONSENT        = 'modal-consent';
 
 const INITIAL_AGREEMENTS = {
-    agreeToTerms: false,
+    agreeToTerms:  false,
     agreeToPrivacy: false,
-    notifications: false,
+    notifications:  false,
 };
 
-const MODAL_TERMS_OF_USE   = 'modal-terms-of-use';    // Условия использования
-const MODAL_PRIVACY_POLICY = 'modal-privacy-policy';  // Политика конфиденциальности
-const MODAL_PUBLIC_OFFER   = 'modal-public-offer';    // Публичная оферта
-const MODAL_CONSENT        = 'modal-consent';         // Согласие на обработку ПД
+// ─────────────────────────────────────────────
+// Компонент
+// ─────────────────────────────────────────────
 
-function BookingForm({ onRequestConfirm, isSubmitting }) {
-    const [form, setForm] = useState(INITIAL_FORM);
-    const [errors, setErrors] = useState({});
+function BookingForm({ venueConfig, onRequestConfirm, isSubmitting }) {
+    const cfg = venueConfig || DEFAULT_CONFIG;
+    const fields = cfg.fields || DEFAULT_CONFIG.fields;
+    const timeSlots = cfg.time_slots || DEFAULT_CONFIG.time_slots;
+
+    // ── Начальное состояние формы ──────────────────────────────────────────
+    const [form, setForm] = useState({
+        name:    '',
+        phone:   '',
+        date:    '',
+        time:    '',
+        // Базовые опциональные поля
+        guests:  1,
+        comment: '',
+        // Динамические поля ниши
+        service: '',
+        master:  '',
+        zone:    '',
+    });
+
+    const [errors,        setErrors]        = useState({});
+    const [agreements,    setAgreements]    = useState(INITIAL_AGREEMENTS);
+    const [consentErrors, setConsentErrors] = useState({});
+    const [activeModal,   setActiveModal]   = useState(null);
 
     // Рандомный плейсхолдер для комментария
     const [commentPlaceholder] = useState(() => {
-        const variants = [
-            'У окна',
-            'В уголочке',
-            'На диване',
-            'Не возле входа',
-            'У розетки',
-        ];
+        const variants = ['У окна', 'В уголочке', 'На диване', 'Не возле входа', 'У розетки'];
         return variants[Math.floor(Math.random() * variants.length)];
     });
 
-    const [agreements, setAgreements] = useState(INITIAL_AGREEMENTS);
-    const [consentErrors, setConsentErrors] = useState({});
-    const [activeModal, setActiveModal] = useState(null);
+    // ── Активные слоты времени (фильтруем прошедшие если дата = сегодня) ──
+    const availableTimeSlots = useMemo(() => {
+        if (!isToday(form.date)) return timeSlots;
+        const now = new Date();
+        const currentMinutes = now.getHours() * 60 + now.getMinutes();
+        return timeSlots.filter(slot => {
+            const [h, m] = slot.split(':').map(Number);
+            return h * 60 + m > currentMinutes;
+        });
+    }, [form.date, timeSlots]);
 
-    // Кнопка активна только когда заполнены все обязательные поля + два обязательных чекбокса
-    // Уведомления — опциональны: бронирование работает без них
+    // ── Кнопка активна когда заполнены обязательные поля ──────────────────
     const canSubmit = useMemo(() => {
         const phoneDigits = form.phone.replace(/\D/g, '');
-        return (
+        const baseOk = (
             form.name.trim().length > 0 &&
             phoneDigits.length >= 10 &&
             form.date.length > 0 &&
@@ -131,161 +167,154 @@ function BookingForm({ onRequestConfirm, isSubmitting }) {
             agreements.agreeToTerms &&
             agreements.agreeToPrivacy
         );
-    }, [form.name, form.phone, form.date, form.time, agreements.agreeToTerms, agreements.agreeToPrivacy]);
+        // Дополнительные обязательные поля ниши
+        const serviceOk = !fields.service?.enabled || !fields.service?.required || form.service;
+        const masterOk  = !fields.master?.enabled  || !fields.master?.required  || form.master;
+        return baseOk && serviceOk && masterOk;
+    }, [form, agreements, fields]);
 
-    // Фильтрация слотов времени: если дата — сегодня, убираем прошедшие
-    const availableTimeSlots = useMemo(() => {
-        if (!isToday(form.date)) return ALL_TIME_SLOTS;
-        const now = new Date();
-        const currentMinutes = now.getHours() * 60 + now.getMinutes();
-        return ALL_TIME_SLOTS.filter(slot => {
-            const [h, m] = slot.split(':').map(Number);
-            return h * 60 + m > currentMinutes;
-        });
-    }, [form.date]);
+    // ── Обработчики ────────────────────────────────────────────────────────
 
-    /** Валидация всех полей формы */
+    const handleChange = (field) => (e) => {
+        const value = e.target?.value ?? e;
+        setForm(prev => ({ ...prev, [field]: value }));
+        if (errors[field]) setErrors(prev => ({ ...prev, [field]: null }));
+    };
+
+    const handlePhoneChange = (e) => {
+        const allDigits = e.target.value.replace(/\D/g, '');
+        let cleaned = allDigits;
+        if (cleaned.startsWith('7') || cleaned.startsWith('8')) cleaned = cleaned.slice(1);
+        cleaned = cleaned.slice(0, 10);
+        setForm(prev => ({ ...prev, phone: cleaned.length > 0 ? formatPhone(cleaned) : '' }));
+        if (errors.phone) setErrors(prev => ({ ...prev, phone: null }));
+    };
+
+    const handleDateChange = (date) => {
+        setForm(prev => ({ ...prev, date: dateToStr(date) }));
+        if (errors.date) setErrors(prev => ({ ...prev, date: null }));
+    };
+
+    // ── Валидация ──────────────────────────────────────────────────────────
+
     const validateFormData = () => {
         const newErrors = {
-            name: validateName(form.name),
-            guests: validateGuests(form.guests),
+            name:  validateName(form.name),
             phone: validatePhone(form.phone),
-            date: validateDate(form.date),
-            time: validateTime(form.time),
+            date:  validateDate(form.date),
+            time:  validateTime(form.time),
         };
-
-        // Удаляем поля без ошибок
-        Object.keys(newErrors).forEach(
-            key => newErrors[key] === null && delete newErrors[key]
-        );
-
+        // Валидация количества гостей
+        if (fields.guests?.enabled && fields.guests?.required && !form.guests) {
+            newErrors.guests = 'Укажите количество гостей';
+        }
+        // Валидация обязательных полей ниши
+        if (fields.service?.enabled && fields.service?.required && !form.service) {
+            newErrors.service = 'Выберите услугу';
+        }
+        if (fields.master?.enabled && fields.master?.required && !form.master) {
+            newErrors.master = 'Выберите мастера';
+        }
+        Object.keys(newErrors).forEach(k => newErrors[k] === null && delete newErrors[k]);
         setErrors(newErrors);
         return Object.keys(newErrors).length === 0;
     };
 
-    /** Обработчик выбора даты из DateInput (получаем объект Date, сохраняем как YYYY-MM-DD) */
-    const handleDateChange = (date) => {
-        const str = dateToStr(date);
-        setForm({ ...form, date: str });
-        if (errors.date) {
-            setErrors({ ...errors, date: null });
-        }
-    };
+    // ── Отправка ───────────────────────────────────────────────────────────
 
-    /** Универсальный обработчик изменения текстового поля */
-    const handleChange = (field) => (e) => {
-        setForm({ ...form, [field]: e.target.value });
-        if (errors[field]) {
-            setErrors({ ...errors, [field]: null });
-        }
-    };
-
-    /** Обработчик телефона: автоформатирование, удаление кода +7/8 */
-    const handlePhoneChange = (e) => {
-        const allDigits = e.target.value.replace(/\D/g, '');
-        let cleaned = allDigits;
-        if (cleaned.startsWith('7') || cleaned.startsWith('8')) {
-            cleaned = cleaned.slice(1);
-        }
-        cleaned = cleaned.slice(0, 10);
-        const formatted = cleaned.length > 0 ? formatPhone(cleaned) : '';
-        setForm({ ...form, phone: formatted });
-        if (errors.phone) {
-            setErrors({ ...errors, phone: null });
-        }
-    };
-
-    /**
-     * Валидирует форму, формирует payload и displayData,
-     * передаёт их в App через onRequestConfirm — реальная отправка там.
-     */
     const handleSubmit = () => {
         if (isSubmitting) return;
 
-        // Проверяем два обязательных чекбокса (уведомления — опциональны)
         const newConsentErrors = {};
-        if (!agreements.agreeToTerms) {
+        if (!agreements.agreeToTerms)
             newConsentErrors.agreeToTerms = 'Необходимо принять пользовательское соглашение';
-        }
-        if (!agreements.agreeToPrivacy) {
+        if (!agreements.agreeToPrivacy)
             newConsentErrors.agreeToPrivacy = 'Необходимо дать согласие на обработку персональных данных';
-        }
         setConsentErrors(newConsentErrors);
-
         if (Object.keys(newConsentErrors).length > 0) return;
         if (!validateFormData()) return;
 
         const cleanPhone = form.phone.replace(/\D/g, '');
 
+        // Собираем extra_data из динамических полей
+        const extra_data = {};
+        if (fields.service?.enabled && form.service) extra_data.service = form.service;
+        if (fields.master?.enabled  && form.master)  extra_data.master  = form.master;
+        if (fields.zone?.enabled    && form.zone)    extra_data.zone    = form.zone;
+
+        // Строка для показа в модальном окне подтверждения
+        const extraLines = Object.entries(extra_data)
+            .map(([k, v]) => {
+                const labels = { service: 'Услуга', master: 'Мастер', zone: 'Зона' };
+                return `${labels[k] || k}: ${v}`;
+            })
+            .join('\n');
+
         onRequestConfirm({
             payload: {
-                name: form.name,
-                guests: form.guests,
-                phone: cleanPhone,
-                date: form.date,
-                time: form.time,
-                comment: form.comment || null,
-                vk_user_id: window.vkUser?.id ?? null,
+                name:             form.name,
+                guests:           fields.guests?.enabled ? Number(form.guests) : 1,
+                phone:            cleanPhone,
+                date:             form.date,
+                time:             form.time,
+                comment:          form.comment || null,
+                extra_data,
+                vk_user_id:       window.vkUser?.id ?? null,
                 vk_notifications: agreements.notifications,
             },
             displayData: {
-                name: form.name,
-                guests: form.guests,
-                phone: form.phone,  // отформатированный для отображения
-                date: form.date,
-                time: form.time,
+                name:    form.name,
+                guests:  fields.guests?.enabled ? form.guests : null,
+                phone:   form.phone,
+                date:    form.date,
+                time:    form.time,
                 comment: form.comment || null,
+                extra:   extraLines || null,
             },
         });
     };
 
-    const DOC_MODALS = {
-        [MODAL_TERMS_OF_USE]:   { title: 'Условия использования',        text: TERMS_OF_USE_TEXT },
-        [MODAL_PRIVACY_POLICY]: { title: 'Политика конфиденциальности',  text: PRIVACY_POLICY_TEXT },
-        [MODAL_PUBLIC_OFFER]:   { title: 'Публичная оферта',             text: USER_AGREEMENT_TEXT },
-        [MODAL_CONSENT]:        { title: 'Согласие на обработку данных', text: PERSONAL_DATA_CONSENT_TEXT },
-    };
+    // ── Документ для модального окна ──────────────────────────────────────
 
-    const activeDoc = activeModal ? DOC_MODALS[activeModal] : null;
+    const DOCS = {
+        [MODAL_TERMS_OF_USE]:   { title: 'Условия использования',          text: TERMS_OF_USE_TEXT   },
+        [MODAL_PRIVACY_POLICY]: { title: 'Политика конфиденциальности',    text: PRIVACY_POLICY_TEXT },
+        [MODAL_PUBLIC_OFFER]:   { title: 'Публичная оферта',               text: USER_AGREEMENT_TEXT },
+        [MODAL_CONSENT]:        { title: 'Согласие на обработку ПД',       text: PERSONAL_DATA_CONSENT_TEXT },
+    };
+    const activeDoc = activeModal ? DOCS[activeModal] : null;
+
+    // ── Рендер ─────────────────────────────────────────────────────────────
 
     return (
         <>
+            {/* Модальное окно с юридическим документом */}
             {activeDoc && (
                 <div style={{
-                    position: 'fixed', top: 0, left: 0, right: 0, bottom: 0,
-                    backgroundColor: 'var(--vkui--color_background_modal_inverse)',
-                    zIndex: 100,
-                    display: 'flex',
-                    flexDirection: 'column',
+                    position: 'fixed', inset: 0, zIndex: 9999,
+                    backgroundColor: 'rgba(0,0,0,0.5)',
+                    display: 'flex', flexDirection: 'column',
                 }}>
                     <div style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        padding: '12px 16px',
-                        borderBottom: '1px solid var(--vkui--color_separator_primary)',
                         backgroundColor: 'var(--vkui--color_background_content)',
+                        padding: '12px 16px',
+                        display: 'flex', justifyContent: 'space-between', alignItems: 'center',
+                        fontWeight: 600,
                     }}>
-                        <span style={{ flex: 1, fontWeight: 600, fontSize: 16 }}>
-                            {activeDoc.title}
-                        </span>
-                        <IconButton onClick={() => setActiveModal(null)}>
-                            <Icon24Dismiss />
-                        </IconButton>
+                        <span>{activeDoc.title}</span>
+                        <button
+                            onClick={() => setActiveModal(null)}
+                            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 20 }}
+                        >✕</button>
                     </div>
                     <div style={{
-                        flex: 1,
-                        overflowY: 'auto',
-                        padding: '16px',
+                        flex: 1, overflowY: 'auto', padding: '16px',
                         backgroundColor: 'var(--vkui--color_background_content)',
                     }}>
                         <pre style={{
-                            whiteSpace: 'pre-wrap',
-                            wordBreak: 'break-word',
-                            fontFamily: 'inherit',
-                            fontSize: 13,
-                            lineHeight: 1.6,
-                            color: 'var(--vkui--color_text_primary)',
-                            margin: 0,
+                            whiteSpace: 'pre-wrap', wordBreak: 'break-word',
+                            fontFamily: 'inherit', fontSize: 13, lineHeight: 1.6,
+                            color: 'var(--vkui--color_text_primary)', margin: 0,
                         }}>
                             {activeDoc.text}
                         </pre>
@@ -293,6 +322,7 @@ function BookingForm({ onRequestConfirm, isSubmitting }) {
                 </div>
             )}
 
+            {/* ── Базовые поля ── */}
             <FormLayoutGroup mode="horizontal">
                 <FormItem
                     top="👤 Имя"
@@ -306,20 +336,22 @@ function BookingForm({ onRequestConfirm, isSubmitting }) {
                     />
                 </FormItem>
 
-                <FormItem
-                    top="👥 Гостей"
-                    status={errors.guests ? 'error' : 'default'}
-                    bottom={errors.guests}
-                >
-                    <Select
-                        value={form.guests}
-                        onChange={handleChange('guests')}
-                        options={Array.from({ length: 5 }, (_, i) => ({
-                            label: String(i + 1),
-                            value: i + 1,
-                        }))}
-                    />
-                </FormItem>
+                {fields.guests?.enabled && (
+                    <FormItem
+                        top="👥 Гостей"
+                        status={errors.guests ? 'error' : 'default'}
+                        bottom={errors.guests}
+                    >
+                        <Select
+                            value={form.guests}
+                            onChange={handleChange('guests')}
+                            options={Array.from(
+                                { length: fields.guests.max || 8 },
+                                (_, i) => ({ label: String(i + 1), value: i + 1 })
+                            )}
+                        />
+                    </FormItem>
+                )}
             </FormLayoutGroup>
 
             <FormItem
@@ -364,30 +396,82 @@ function BookingForm({ onRequestConfirm, isSubmitting }) {
                 </FormItem>
             </FormLayoutGroup>
 
-            <FormItem
-                top="💬 Комментарий"
-                bottom={
-                    <span style={{
-                        float: 'right',
-                        color: form.comment.length > 450
-                            ? 'var(--vkui--color_text_negative)'
-                            : 'var(--vkui--color_text_secondary)',
-                        fontSize: 13,
-                    }}>
-                        {form.comment.length}/500
-                    </span>
-                }
-            >
-                <Textarea
-                    value={form.comment}
-                    onChange={handleChange('comment')}
-                    placeholder={commentPlaceholder}
-                    rows={3}
-                    maxLength={500}
-                />
-            </FormItem>
+            {/* ── Динамические поля ниши ── */}
 
-            {/* Чекбокс 1: три документа в одной строке (как на скриншоте) */}
+            {fields.service?.enabled && fields.service.options?.length > 0 && (
+                <FormItem
+                    top="✨ Услуга"
+                    status={errors.service ? 'error' : 'default'}
+                    bottom={errors.service}
+                >
+                    <Select
+                        value={form.service}
+                        onChange={handleChange('service')}
+                        placeholder="Выберите услугу"
+                        options={fields.service.options.map(o => ({ label: o, value: o }))}
+                    />
+                </FormItem>
+            )}
+
+            {fields.master?.enabled && fields.master.options?.length > 0 && (
+                <FormItem
+                    top="👨‍🎨 Мастер"
+                    status={errors.master ? 'error' : 'default'}
+                    bottom={errors.master}
+                >
+                    <Select
+                        value={form.master}
+                        onChange={handleChange('master')}
+                        placeholder="Выберите мастера"
+                        options={[
+                            { label: 'Любой свободный', value: '' },
+                            ...fields.master.options.map(o => ({ label: o, value: o })),
+                        ]}
+                    />
+                </FormItem>
+            )}
+
+            {fields.zone?.enabled && fields.zone.options?.length > 0 && (
+                <FormItem top="🗺 Зона">
+                    <Select
+                        value={form.zone}
+                        onChange={handleChange('zone')}
+                        placeholder="Любая зона"
+                        options={[
+                            { label: 'Любая зона', value: '' },
+                            ...fields.zone.options.map(o => ({ label: o, value: o })),
+                        ]}
+                    />
+                </FormItem>
+            )}
+
+            {fields.comment?.enabled !== false && (
+                <FormItem
+                    top="💬 Комментарий"
+                    bottom={
+                        <span style={{
+                            float: 'right',
+                            color: form.comment.length > 450
+                                ? 'var(--vkui--color_text_negative)'
+                                : 'var(--vkui--color_text_secondary)',
+                            fontSize: 13,
+                        }}>
+                            {form.comment.length}/500
+                        </span>
+                    }
+                >
+                    <Textarea
+                        value={form.comment}
+                        onChange={handleChange('comment')}
+                        placeholder={commentPlaceholder}
+                        rows={3}
+                        maxLength={500}
+                    />
+                </FormItem>
+            )}
+
+            {/* ── Чекбоксы ── */}
+
             <FormItem
                 status={consentErrors.agreeToTerms ? 'error' : 'default'}
                 bottom={consentErrors.agreeToTerms}
@@ -395,10 +479,9 @@ function BookingForm({ onRequestConfirm, isSubmitting }) {
                 <Checkbox
                     checked={agreements.agreeToTerms}
                     onChange={(e) => {
-                        setAgreements({ ...agreements, agreeToTerms: e.target.checked });
-                        if (e.target.checked && consentErrors.agreeToTerms) {
-                            setConsentErrors({ ...consentErrors, agreeToTerms: undefined });
-                        }
+                        setAgreements(prev => ({ ...prev, agreeToTerms: e.target.checked }));
+                        if (e.target.checked && consentErrors.agreeToTerms)
+                            setConsentErrors(prev => ({ ...prev, agreeToTerms: undefined }));
                     }}
                 >
                     {'Я принимаю '}
@@ -419,7 +502,6 @@ function BookingForm({ onRequestConfirm, isSubmitting }) {
                 </Checkbox>
             </FormItem>
 
-            {/* Чекбокс 2: согласие на обработку ПД */}
             <FormItem
                 status={consentErrors.agreeToPrivacy ? 'error' : 'default'}
                 bottom={consentErrors.agreeToPrivacy}
@@ -427,10 +509,9 @@ function BookingForm({ onRequestConfirm, isSubmitting }) {
                 <Checkbox
                     checked={agreements.agreeToPrivacy}
                     onChange={(e) => {
-                        setAgreements({ ...agreements, agreeToPrivacy: e.target.checked });
-                        if (e.target.checked && consentErrors.agreeToPrivacy) {
-                            setConsentErrors({ ...consentErrors, agreeToPrivacy: undefined });
-                        }
+                        setAgreements(prev => ({ ...prev, agreeToPrivacy: e.target.checked }));
+                        if (e.target.checked && consentErrors.agreeToPrivacy)
+                            setConsentErrors(prev => ({ ...prev, agreeToPrivacy: undefined }));
                     }}
                 >
                     {'Я даю согласие на '}
@@ -447,16 +528,17 @@ function BookingForm({ onRequestConfirm, isSubmitting }) {
                     onChange={async (e) => {
                         if (e.target.checked) {
                             try {
+                                const groupId = window.vkGroupId
+                                    || Number(import.meta.env.VITE_VK_GROUP_ID);
                                 await bridge.send('VKWebAppAllowMessagesFromGroup', {
-                                    group_id: Number(import.meta.env.VITE_VK_GROUP_ID),
+                                    group_id: groupId,
                                 });
-                                setAgreements({ ...agreements, notifications: true });
+                                setAgreements(prev => ({ ...prev, notifications: true }));
                             } catch {
-                                // User declined — leave unchecked, booking still works
-                                setAgreements({ ...agreements, notifications: false });
+                                setAgreements(prev => ({ ...prev, notifications: false }));
                             }
                         } else {
-                            setAgreements({ ...agreements, notifications: false });
+                            setAgreements(prev => ({ ...prev, notifications: false }));
                         }
                     }}
                 >
@@ -472,7 +554,7 @@ function BookingForm({ onRequestConfirm, isSubmitting }) {
                     disabled={!canSubmit || isSubmitting}
                     loading={isSubmitting}
                 >
-                    ☕ Забронировать
+                    {cfg.welcome_text || 'Забронировать'}
                 </Button>
             </FormItem>
         </>
