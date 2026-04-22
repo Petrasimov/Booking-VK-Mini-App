@@ -75,15 +75,14 @@ def setup_database():
 
 @pytest.fixture(autouse=True)
 def patch_middleware_session():
-    """
-    Заменяет фабрику сессий в TenantMiddleware на тестовую SQLite.
-    Без этого middleware ходит в реальную PostgreSQL и не находит тестовые данные.
-    """
     import app.middleware as mw
     original = mw._session_factory
     mw._session_factory = TestingAsyncSessionLocal
+    # Очищаем кэш заведений перед каждым тестом
+    mw._venue_cache._store.clear()
     yield
     mw._session_factory = original
+    mw._venue_cache._store.clear()
 
 
 # ─────────────────────────────────────────────
