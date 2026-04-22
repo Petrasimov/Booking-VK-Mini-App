@@ -20,6 +20,7 @@ class ReservationCreate(BaseModel):
     date: Date = Field(description="Дата визита")
     time: Time = Field(description="Время визита")
     comment: str | None = Field(default=None, max_length=500, description="Комментарий")
+    extra_data: dict = Field(default_factory=dict, description="Доп. поля ниши (мастер, услуга и т.д.)")
     vk_user_id: int | None = None
     vk_notifications: bool = False
 
