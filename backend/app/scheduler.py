@@ -24,6 +24,7 @@ from app.vk_bot import (
     send_vk_message,
     send_waiters_confirmation_request,
 )
+from app.jobs.archiver import run_aggregate_job, run_cold_archive_job, run_cleanup_job
 
 logger = logging.getLogger(__name__)
 
@@ -147,7 +148,42 @@ async def send_daily_summary():
         logger.info("Daily summary sent: %d reservations", len(reservations))
     finally:
         db.close()
+        
 
+async def run_nightly_aggregate():
+    """Агрегирует брони старше 6 мес в статистику и архив. 03:00."""
+    db = SessionLocal()
+    try:
+        result = run_aggregate_job(db)
+        logger.info("Nightly aggregate: %s", result)
+    except Exception as e:
+        logger.error("Nightly aggregate failed: %s", e)
+    finally:
+        db.close()
+
+
+async def run_monthly_cold_archive():
+    """Переносит архив старше 2 лет в cold storage. 1-е число 02:00."""
+    db = SessionLocal()
+    try:
+        result = run_cold_archive_job(db)
+        logger.info("Monthly cold archive: %s", result)
+    except Exception as e:
+        logger.error("Monthly cold archive failed: %s", e)
+    finally:
+        db.close()
+
+
+async def run_nightly_cleanup():
+    """Очищает служебные таблицы. 04:00."""
+    db = SessionLocal()
+    try:
+        result = run_cleanup_job(db)
+        logger.info("Nightly cleanup: %s", result)
+    except Exception as e:
+        logger.error("Nightly cleanup failed: %s", e)
+    finally:
+        db.close()
 
 async def run_scheduler():
     """Main scheduler loop — polls every POLL_INTERVAL seconds."""
