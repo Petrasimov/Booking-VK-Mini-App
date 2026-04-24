@@ -294,3 +294,27 @@ class RateLimitEntry(Base):
     ip           = Column(String(50), nullable=False)
     window_start = Column(DateTime,   nullable=False)
     count        = Column(Integer,    default=1, nullable=False)
+    
+    
+# ─────────────────────────────────────────────
+# Payment — платёж за тариф
+# ─────────────────────────────────────────────
+
+class Payment(Base):
+    """
+    Платёж за тарифный план.
+    Создаётся при нажатии "Оплатить", обновляется webhook-ом от ЮKassa.
+    """
+    __tablename__ = "payments"
+
+    id           = Column(Integer,       primary_key=True)
+    venue_id     = Column(Integer,       ForeignKey("venues.id", ondelete="CASCADE"),
+                          nullable=False, index=True)
+    yookassa_id  = Column(String(100),   unique=True, nullable=True)
+    amount       = Column(Numeric(10,2), nullable=False)
+    plan         = Column(String(20),    nullable=False)   # standard | pro
+    months       = Column(Integer,       default=1)
+    status       = Column(String(20),    nullable=False, default="pending")
+    # pending | succeeded | canceled
+    created_at   = Column(DateTime,      nullable=False, default=datetime.utcnow)
+    completed_at = Column(DateTime,      nullable=True)

@@ -40,6 +40,7 @@ from starlette.types import ASGIApp, Receive, Scope, Send
 from app.schemas import ReservationCreate, ReservationResponse, ErrorReport
 from app.schemas import VenueConfigResponse, PlanLimitsResponse
 from app.routers import venue as venue_router
+from app.routers import payments as payments_router
 from app.database import SessionLocal, engine, Base, AsyncSessionLocal
 from app.models import Reservation, ScheduledTask, ErrorLog, RateLimitEntry, Venue
 from app.middleware import TenantMiddleware
@@ -85,6 +86,7 @@ app = FastAPI(
 # --- Prometheus ---
 Instrumentator().instrument(app).expose(app, endpoint="/api/metrics/prometheus")
 app.include_router(venue_router.router)
+app.include_router(payments_router.router)
 
 
 # ===============================

@@ -1,17 +1,9 @@
 """
-Фикстуры для тестов: тестовая БД (SQLite + aiosqlite), клиент FastAPI.
+Фикстуры для тестов.
 
-Важно:
-- load_dotenv() вызывается ДО любых from app.* импортов
-- Используется async SQLite (sqlite+aiosqlite) для совместимости с AsyncSession
-- setup_database пересоздаёт таблицы перед каждым тестом
-- TenantMiddleware патчится для использования тестовой БД
-
-Фикстуры:
-  client        — синхронный TestClient (для существующих тестов)
-  db_session    — синхронная SQLite сессия (для тестов моделей)
-  async_client  — асинхронный AsyncClient (для тестов мультитенантности)
-  async_db      — асинхронная SQLite сессия (для async тестов)
+Используем один файл test.db для sync и async движков.
+В setup_database: drop_all → create_all (вместо удаления файла).
+Это гарантирует чистое состояние даже если файл заблокирован aiosqlite на Windows.
 """
 
 import os
@@ -19,10 +11,9 @@ import pytest
 import pytest_asyncio
 from dotenv import load_dotenv
 
-# Загружаем .env до импорта app.*, чтобы os.getenv("DB_PASSWORD") не был None
 load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
 
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from fastapi.testclient import TestClient
@@ -32,23 +23,26 @@ from app.database import Base
 from app.main import app
 from app.deps import get_db
 
-
 # ─────────────────────────────────────────────
-# SQLite engines
+# Оба движка на один файл
 # ─────────────────────────────────────────────
 
-SYNC_DATABASE_URL = "sqlite:///./test.db"
+TEST_DB_FILE = "./test.db"
+SYNC_URL     = f"sqlite:///{TEST_DB_FILE}"
+ASYNC_URL    = f"sqlite+aiosqlite:///{TEST_DB_FILE}"
+
 sync_engine = create_engine(
-    SYNC_DATABASE_URL,
+    SYNC_URL,
     connect_args={"check_same_thread": False},
 )
-TestingSyncSessionLocal = sessionmaker(bind=sync_engine)
 
-TEST_DATABASE_URL = "sqlite+aiosqlite:///./test.db"
 test_async_engine = create_async_engine(
-    TEST_DATABASE_URL,
+    ASYNC_URL,
     connect_args={"check_same_thread": False},
 )
+
+TestingSyncSessionLocal = sessionmaker(bind=sync_engine, autoflush=True)
+
 TestingAsyncSessionLocal = async_sessionmaker(
     test_async_engine,
     class_=AsyncSession,
@@ -57,28 +51,48 @@ TestingAsyncSessionLocal = async_sessionmaker(
 
 
 # ─────────────────────────────────────────────
-# Создание/удаление таблиц — только через sync engine
-# (aiosqlite использует тот же файл test.db)
+# Сброс и пересоздание БД перед каждым тестом
 # ─────────────────────────────────────────────
 
 @pytest.fixture(autouse=True)
 def setup_database():
-    """Создаёт таблицы перед каждым тестом, удаляет после."""
+    """
+    drop_all → create_all перед каждым тестом.
+    Не удаляем файл (он может быть заблокирован aiosqlite на Windows).
+    drop_all очищает все таблицы и индексы, create_all создаёт заново.
+    """
+    # Сбрасываем пул соединений синхронного движка
+    sync_engine.dispose()
+
+    # Удаляем всё что есть в БД (если файл существует)
+    try:
+        Base.metadata.drop_all(bind=sync_engine)
+    except Exception:
+        pass
+
+    # Пересоздаём таблицы
     Base.metadata.create_all(bind=sync_engine)
+
     yield
-    Base.metadata.drop_all(bind=sync_engine)
+
+    # Очищаем после теста
+    try:
+        Base.metadata.drop_all(bind=sync_engine)
+    except Exception:
+        pass
+    sync_engine.dispose()
 
 
 # ─────────────────────────────────────────────
-# Патч TenantMiddleware для использования тестовой БД
+# Патч middleware
 # ─────────────────────────────────────────────
 
 @pytest.fixture(autouse=True)
 def patch_middleware_session():
+    """Подменяет фабрику сессий в TenantMiddleware на тестовую."""
     import app.middleware as mw
     original = mw._session_factory
     mw._session_factory = TestingAsyncSessionLocal
-    # Очищаем кэш заведений перед каждым тестом
     mw._venue_cache._store.clear()
     yield
     mw._session_factory = original
@@ -86,12 +100,12 @@ def patch_middleware_session():
 
 
 # ─────────────────────────────────────────────
-# Синхронные фикстуры (существующие тесты)
+# Синхронные фикстуры
 # ─────────────────────────────────────────────
 
 @pytest.fixture
 def client():
-    """Синхронный HTTP-клиент для тестирования API."""
+    """Синхронный HTTP-клиент."""
     from app.main import _global_log
     _global_log.clear()
 
@@ -107,7 +121,7 @@ def client():
 
 @pytest.fixture
 def db_session():
-    """Синхронная SQLite сессия для прямого тестирования ORM-моделей."""
+    """Синхронная сессия для тестов моделей."""
     db = TestingSyncSessionLocal()
     try:
         yield db
@@ -116,19 +130,19 @@ def db_session():
 
 
 # ─────────────────────────────────────────────
-# Асинхронные фикстуры (тесты мультитенантности)
+# Асинхронные фикстуры
 # ─────────────────────────────────────────────
 
 @pytest_asyncio.fixture
 async def async_db():
-    """Асинхронная SQLite сессия для async тестов."""
+    """Асинхронная сессия для async тестов."""
     async with TestingAsyncSessionLocal() as session:
         yield session
 
 
 @pytest_asyncio.fixture
 async def async_client():
-    """Асинхронный HTTP-клиент для async тестов."""
+    """Асинхронный HTTP-клиент."""
     from app.main import _global_log
     _global_log.clear()
 
