@@ -1,15 +1,14 @@
 /**
  * Корневой компонент приложения.
  *
- * При старте загружает конфиг заведения (GET /api/config).
- * Если заведение не зарегистрировано — показывает онбординг (TODO: Этап 4).
- * Если зарегистрировано — передаёт venueConfig в форму бронирования.
- *
- * Управляет модальными окнами:
- *   - welcome  — приветствие при первом открытии
- *   - confirm  — подтверждение данных перед отправкой
- *   - success  — успешное бронирование
- *   - error    — сообщение об ошибке
+ * При старте:
+ *   1. Загружает конфиг заведения (GET /api/config)
+ *   2. Определяет роль пользователя (владелец / гость)
+ *   3. Показывает нужный экран:
+ *      - Не зарегистрировано + владелец → OnboardingWizard
+ *      - Зарегистрировано + владелец    → AdminPanel
+ *      - Зарегистрировано + гость       → Home (форма бронирования)
+ *      - Не зарегистрировано + гость    → заглушка
  */
 
 import { useState, useRef, useEffect } from 'react'
@@ -25,18 +24,14 @@ import {
     Text,
     ScreenSpinner,
 } from '@vkontakte/vkui'
-import Home from './pages/Home'
+import Home            from './pages/Home'
+import OnboardingWizard from './pages/onboarding/OnboardingWizard'
+import AdminPanel      from './pages/admin/AdminPanel'
 
-/** Таймаут запроса к API (мс) */
-const FETCH_TIMEOUT_MS = 10_000
-
-/** Задержки retry для 5xx: 1с -> 2с -> 4с */
-const RETRY_DELAYS_MS = [1000, 2000, 4000]
-
-/** Коды статусов, при которых выполняется retry */
+const FETCH_TIMEOUT_MS   = 10_000
+const RETRY_DELAYS_MS    = [1000, 2000, 4000]
 const RETRYABLE_STATUSES = new Set([500, 502, 503])
 
-/** Человекочитаемое сообщение по HTTP-статусу */
 function getErrorMessage(status, defaultMsg) {
     if (status === 402) return 'Лимит бронирований на этот месяц исчерпан. Обратитесь к владельцу заведения.'
     if (status === 409) return 'Бронирование на этот день с таким телефоном уже существует.'
@@ -47,21 +42,26 @@ function getErrorMessage(status, defaultMsg) {
     return defaultMsg || 'Не удалось отправить бронь. Попробуйте ещё раз.'
 }
 
-/** Получить group_id из URL-параметров VK */
 function getVkGroupId() {
-    const params = new URLSearchParams(window.location.search)
-    return params.get('vk_group_id') || params.get('group_id') || null
+    const p = new URLSearchParams(window.location.search)
+    return p.get('vk_group_id') || p.get('group_id') || null
+}
+
+function getVkUserId() {
+    const p = new URLSearchParams(window.location.search)
+    return p.get('vk_user_id') || null
 }
 
 function App() {
-    // Цветовая схема VK
     const vkColorScheme = new URLSearchParams(window.location.search).get('vk_color_scheme')
-    const appearance = vkColorScheme === 'space_gray' ? 'dark' : 'light'
+    const appearance    = vkColorScheme === 'space_gray' ? 'dark' : 'light'
 
-    // ── Конфиг заведения ──────────────────────────────────────────────────
-    const [venueConfig, setVenueConfig]   = useState(null)
-    const [configLoading, setConfigLoading] = useState(true)
-    const [isRegistered, setIsRegistered] = useState(true)
+    // ── Конфиг и состояние загрузки ──────────────────────────────────────
+    const [venueConfig,    setVenueConfig]    = useState(null)
+    const [venueData,      setVenueData]      = useState(null)   // полный ответ /api/config
+    const [configLoading,  setConfigLoading]  = useState(true)
+    const [isRegistered,   setIsRegistered]   = useState(true)
+    const [isOwner,        setIsOwner]        = useState(false)
 
     // ── Состояние формы и модалок ─────────────────────────────────────────
     const [activeModal,     setActiveModal]     = useState('welcome')
@@ -74,24 +74,29 @@ function App() {
 
     const retryCount = useRef(0)
     const groupId    = getVkGroupId()
+    const vkUserId   = getVkUserId()
 
-    // Сохраняем group_id глобально для BookingForm (VKWebAppAllowMessagesFromGroup)
-    if (groupId) window.vkGroupId = Number(groupId)
+    if (groupId)  window.vkGroupId = Number(groupId)
+    if (vkUserId) window.vkUserId  = Number(vkUserId)
 
-    // ── Загрузка конфига заведения при старте ────────────────────────────
+    // ── Загрузка конфига при старте ───────────────────────────────────────
     useEffect(() => {
         const fetchConfig = async () => {
             try {
                 const headers = {}
-                if (groupId) headers['X-VK-Group-ID'] = groupId
+                if (groupId)  headers['X-VK-Group-ID'] = groupId
+                if (vkUserId) headers['X-VK-User-ID']  = vkUserId
 
                 const res = await fetch('/api/config', { headers })
                 if (!res.ok) throw new Error(`HTTP ${res.status}`)
-
                 const data = await res.json()
+
+                setVenueData(data)
 
                 if (!data.is_registered) {
                     setIsRegistered(false)
+                    // Если пришёл с vk_user_id — возможно владелец хочет зарегистрировать
+                    setIsOwner(!!vkUserId)
                     setConfigLoading(false)
                     return
                 }
@@ -99,46 +104,43 @@ function App() {
                 setVenueConfig(data.config)
                 setIsRegistered(true)
 
-                // Применяем акцентный цвет заведения
+                // Определяем является ли пользователь владельцем
+                if (vkUserId && data.owner_vk_id) {
+                    setIsOwner(Number(vkUserId) === Number(data.owner_vk_id))
+                }
+
                 if (data.config?.accent_color) {
                     document.documentElement.style.setProperty(
-                        '--accent-color',
-                        data.config.accent_color
+                        '--accent-color', data.config.accent_color
                     )
                 }
             } catch (e) {
-                // При ошибке загрузки конфига — используем дефолтный
                 console.warn('Failed to load venue config:', e)
                 setVenueConfig(null)
             } finally {
                 setConfigLoading(false)
             }
         }
-
         fetchConfig()
-    }, [groupId])
+    }, [groupId, vkUserId])
 
     const openModal  = (name) => setActiveModal(name)
     const closeModal = () => setActiveModal(null)
 
-    // ── Логика подтверждения и отправки ──────────────────────────────────
-
+    // ── Логика бронирования ───────────────────────────────────────────────
     const handleRequestConfirm = ({ payload, displayData }) => {
         retryCount.current = 0
         setPendingFormData({ payload, displayData })
         openModal('confirm')
     }
 
-    const handleCancelConfirm = () => {
-        setPendingFormData(null)
-        closeModal()
-    }
+    const handleCancelConfirm = () => { setPendingFormData(null); closeModal() }
 
     const handleConfirmSubmit = async () => {
         if (!pendingFormData || isSubmitting) return
 
         if (!navigator.onLine) {
-            setErrorMessage('Нет подключения к интернету. Проверьте соединение и попробуйте снова.')
+            setErrorMessage('Нет подключения к интернету.')
             setCanRetry(false)
             openModal('error')
             return
@@ -150,18 +152,16 @@ function App() {
         const controller = new AbortController()
         const timeoutId  = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
 
-        // Добавляем group_id в заголовок запроса
         const headers = { 'Content-Type': 'application/json' }
-        if (groupId) headers['X-VK-Group-ID'] = groupId
+        if (groupId)  headers['X-VK-Group-ID'] = groupId
+        if (vkUserId) headers['X-VK-User-ID']  = vkUserId
 
         try {
             const response = await fetch('/api/reservation', {
-                method:  'POST',
-                headers,
-                body:    JSON.stringify(pendingFormData.payload),
-                signal:  controller.signal,
+                method: 'POST', headers,
+                body:   JSON.stringify(pendingFormData.payload),
+                signal: controller.signal,
             })
-
             clearTimeout(timeoutId)
 
             if (RETRYABLE_STATUSES.has(response.status)) {
@@ -170,23 +170,17 @@ function App() {
                     retryCount.current += 1
                     const delay = RETRY_DELAYS_MS[attempt]
                     setIsSubmitting(false)
-                    setErrorMessage(
-                        `${getErrorMessage(response.status)}\n\nПовторная попытка ${retryCount.current} из ${RETRY_DELAYS_MS.length} через ${delay / 1000} сек...`
-                    )
+                    setErrorMessage(`${getErrorMessage(response.status)}\n\nПовтор через ${delay / 1000} сек...`)
                     setCanRetry(false)
                     openModal('error')
                     setTimeout(() => { closeModal(); handleConfirmSubmit() }, delay)
                     return
                 }
-                throw new Error('Сервер временно недоступен. Пожалуйста, попробуйте позже.')
+                throw new Error('Сервер временно недоступен.')
             }
 
-            if (!response.ok) {
-                throw Object.assign(
-                    new Error(getErrorMessage(response.status)),
-                    { status: response.status }
-                )
-            }
+            if (!response.ok)
+                throw Object.assign(new Error(getErrorMessage(response.status)), { status: response.status })
 
             const data = await response.json()
             setIsSubmitting(false)
@@ -199,18 +193,10 @@ function App() {
         } catch (error) {
             clearTimeout(timeoutId)
             setIsSubmitting(false)
-
-            let message   = error.message || 'Не удалось отправить бронь. Попробуйте ещё раз.'
+            let message = error.message || 'Не удалось отправить бронь.'
             let showRetry = false
-
-            if (error.name === 'AbortError') {
-                message   = 'Превышено время ожидания. Проверьте соединение и попробуйте снова.'
-                showRetry = true
-            } else if (!navigator.onLine) {
-                message   = 'Соединение с сервером потеряно. Проверьте интернет и повторите попытку.'
-                showRetry = true
-            }
-
+            if (error.name === 'AbortError') { message = 'Превышено время ожидания.'; showRetry = true }
+            else if (!navigator.onLine)       { message = 'Нет соединения.';            showRetry = true }
             setErrorMessage(message)
             setCanRetry(showRetry)
             openModal('error')
@@ -219,31 +205,39 @@ function App() {
 
     const handleRetry = () => { closeModal(); handleConfirmSubmit() }
 
-    // ── Загрузка конфига ─────────────────────────────────────────────────
+    // ── Обработчик завершения онбординга ─────────────────────────────────
+    const handleOnboardingComplete = (newVenueData) => {
+        setVenueData(newVenueData)
+        setVenueConfig(newVenueData.config)
+        setIsRegistered(true)
+        setIsOwner(true)
+    }
+
+    // ── Загрузка ─────────────────────────────────────────────────────────
     if (configLoading) {
         return (
             <ConfigProvider appearance={appearance}>
-                <AppRoot>
-                    <ScreenSpinner />
-                </AppRoot>
+                <AppRoot><ScreenSpinner /></AppRoot>
             </ConfigProvider>
         )
     }
 
-    // ── Заведение не зарегистрировано — TODO Этап 4: онбординг ──────────
-    // Пока показываем заглушку
+    // ── Роутинг ───────────────────────────────────────────────────────────
+
+    // 1. Заведение не зарегистрировано + пользователь (возможный владелец)
     if (!isRegistered) {
         return (
             <ConfigProvider appearance={appearance}>
                 <AppRoot>
                     <SplitLayout>
                         <SplitCol autoSpaced>
-                            <View activePanel="stub">
-                                <Panel id="stub">
-                                    <div style={{ padding: 24, textAlign: 'center' }}>
-                                        <p>Заведение не подключено к системе бронирования.</p>
-                                        <p>Обратитесь к администратору группы для настройки.</p>
-                                    </div>
+                            <View activePanel="onboarding">
+                                <Panel id="onboarding">
+                                    <OnboardingWizard
+                                        groupId={groupId}
+                                        vkUserId={vkUserId}
+                                        onComplete={handleOnboardingComplete}
+                                    />
                                 </Panel>
                             </View>
                         </SplitCol>
@@ -253,12 +247,30 @@ function App() {
         )
     }
 
-    // Текст успешного экрана из конфига или дефолт
-    const venueName    = venueConfig?.welcome_text || 'Шоколадницу'
-    const successTitle = `🎉 Бронирование подтверждено!`
-    const successDesc  = `Ждём вас! До встречи ☕`
+    // 2. Заведение зарегистрировано + владелец → панель управления
+    if (isRegistered && isOwner) {
+        return (
+            <ConfigProvider appearance={appearance}>
+                <AppRoot>
+                    <SplitLayout>
+                        <SplitCol autoSpaced>
+                            <View activePanel="admin">
+                                <Panel id="admin">
+                                    <AdminPanel
+                                        venueData={venueData}
+                                        groupId={groupId}
+                                        vkUserId={vkUserId}
+                                    />
+                                </Panel>
+                            </View>
+                        </SplitCol>
+                    </SplitLayout>
+                </AppRoot>
+            </ConfigProvider>
+        )
+    }
 
-    // ── Основной рендер ──────────────────────────────────────────────────
+    // 3. Гость → форма бронирования
     return (
         <ConfigProvider appearance={appearance}>
             <AppRoot>
@@ -277,7 +289,7 @@ function App() {
                     </SplitCol>
                 </SplitLayout>
 
-                {/* Приветственное окно */}
+                {/* Приветствие */}
                 <ModalCard
                     open={activeModal === 'welcome'}
                     onClose={closeModal}
@@ -290,22 +302,19 @@ function App() {
                     }
                 />
 
-                {/* Подтверждение бронирования */}
+                {/* Подтверждение */}
                 <ModalCard
                     open={activeModal === 'confirm'}
                     onClose={handleCancelConfirm}
                     title="📋 Проверьте данные"
-                    description="Убедитесь, что всё верно, прежде чем подтвердить."
+                    description="Убедитесь, что всё верно."
                     actions={
                         <>
                             <Button size="l" mode="primary" stretched onClick={handleConfirmSubmit}>
                                 ✅ Подтвердить
                             </Button>
-                            <Button
-                                size="l" mode="secondary" stretched
-                                onClick={handleCancelConfirm}
-                                style={{ marginTop: 8 }}
-                            >
+                            <Button size="l" mode="secondary" stretched onClick={handleCancelConfirm}
+                                style={{ marginTop: 8 }}>
                                 ✏️ Изменить данные
                             </Button>
                         </>
@@ -330,12 +339,12 @@ function App() {
                     )}
                 </ModalCard>
 
-                {/* Успешное бронирование */}
+                {/* Успех */}
                 <ModalCard
                     open={activeModal === 'success'}
                     onClose={closeModal}
-                    title={successTitle}
-                    description={successDesc}
+                    title="🎉 Бронирование подтверждено!"
+                    description="Ждём вас! До встречи ☕"
                     actions={
                         <Button size="l" stretched mode="primary" onClick={closeModal}>
                             Закрыть
@@ -363,11 +372,8 @@ function App() {
                                 Понятно
                             </Button>
                             {canRetry && (
-                                <Button
-                                    size="l" mode="secondary" stretched
-                                    onClick={handleRetry}
-                                    style={{ marginTop: 8 }}
-                                >
+                                <Button size="l" mode="secondary" stretched onClick={handleRetry}
+                                    style={{ marginTop: 8 }}>
                                     🔄 Попробовать снова
                                 </Button>
                             )}
