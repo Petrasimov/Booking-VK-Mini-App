@@ -1,0 +1,39 @@
+[Unit]
+Description=Booking VK Mini App — FastAPI
+Documentation=https://github.com/Petrasimov/Booking-VK-Mini-App
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=app
+Group=app
+WorkingDirectory=/var/www/app/backend
+EnvironmentFile=/var/www/app/backend/.env
+
+# Запуск uvicorn с 2 воркерами (по числу vCPU)
+ExecStart=/var/www/app/backend/.venv/bin/uvicorn \
+    app.main:app \
+    --host 127.0.0.1 \
+    --port 8001 \
+    --workers 2 \
+    --log-level info \
+    --access-log
+
+# Автоперезапуск при падении
+Restart=always
+RestartSec=5
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+# Логи через journald
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=bookings-api
+
+# Безопасность
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

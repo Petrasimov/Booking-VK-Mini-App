@@ -1,0 +1,30 @@
+[Unit]
+Description=Booking VK Mini App — Scheduler (нотификации и архивация)
+Documentation=https://github.com/Petrasimov/Booking-VK-Mini-App
+After=network.target app-api.service
+Wants=app-api.service
+
+[Service]
+Type=simple
+User=app
+Group=app
+WorkingDirectory=/var/www/app/backend
+EnvironmentFile=/var/www/app/backend/.env
+
+ExecStart=/var/www/app/backend/.venv/bin/python -c \
+    "import asyncio; from app.scheduler import run_scheduler; asyncio.run(run_scheduler())"
+
+Restart=always
+RestartSec=15
+StartLimitIntervalSec=120
+StartLimitBurst=3
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=bookings-scheduler
+
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

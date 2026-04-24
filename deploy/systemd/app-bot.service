@@ -1,0 +1,29 @@
+[Unit]
+Description=Booking VK Mini App — VK Bot (Long Poll)
+Documentation=https://github.com/Petrasimov/Booking-VK-Mini-App
+After=network.target app-api.service
+Wants=app-api.service
+
+[Service]
+Type=simple
+User=app
+Group=app
+WorkingDirectory=/var/www/app/backend
+EnvironmentFile=/var/www/app/backend/.env
+
+ExecStart=/var/www/app/backend/.venv/bin/python -m app.vk_bot_server
+
+Restart=always
+RestartSec=10
+StartLimitIntervalSec=120
+StartLimitBurst=5
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=bookings-bot
+
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
