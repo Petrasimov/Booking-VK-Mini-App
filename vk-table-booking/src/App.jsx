@@ -355,7 +355,7 @@ function App() {
                         <Text>
                             <b>👤 Имя:</b> {reservationData.name}<br />
                             <b>📅 Дата:</b> {reservationData.date}<br />
-                            <b>⏰ Время:</b> {reservationData.time}
+                            <b>⏰ Время:</b> {reservationData.time?.slice(0, 5)}
                         </Text>
                     )}
                 </ModalCard>

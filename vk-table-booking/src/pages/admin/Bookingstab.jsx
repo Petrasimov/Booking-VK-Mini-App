@@ -5,8 +5,8 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import {
-    Group, Header, Spinner, Button, Select,
-    SimpleCell, Badge, Pagination, FormItem,
+    Group, Header, Button, Select,
+    SimpleCell, Pagination, FormItem,
     Snackbar, Avatar,
 } from '@vkontakte/vkui'
 
@@ -116,7 +116,7 @@ function BookingsTab({ headers, venueData }) {
             </Header>
 
             {loading ? (
-                <div style={{ padding: 32, textAlign: 'center' }}><Spinner size="medium" /></div>
+                <div style={{ padding: 32, textAlign: 'center', color: 'var(--vkui--color_text_secondary)' }}>Загрузка...</div>
             ) : bookings.length === 0 ? (
                 <div style={{ padding: 32, textAlign: 'center',
                     color: 'var(--vkui--color_text_secondary)', fontSize: 14 }}>

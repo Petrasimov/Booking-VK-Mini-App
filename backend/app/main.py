@@ -246,6 +246,7 @@ async def get_venue_config(
         plan_expires_at=venue.plan_expires_at,
         plan_limits=plan_limits,
         config=venue.config,
+        owner_vk_id=venue.owner_vk_id,
     )
 
 

@@ -93,6 +93,7 @@ class VenueConfigResponse(BaseModel):
     plan_expires_at: datetime | None = None
     plan_limits: PlanLimitsResponse | None = None
     config: dict | None = None
+    owner_vk_id: int | None = None
 
 
 class VenueRegisterRequest(BaseModel):

@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import {
     Button, FormItem, Group, Header,
-    Input, Spinner, Banner,
+    Input
 } from '@vkontakte/vkui'
 
 function StepNotifications({ state, set, back, onFinish }) {
@@ -42,10 +42,19 @@ function StepNotifications({ state, set, back, onFinish }) {
 
     return (
         <Group header={<Header>Уведомления для персонала</Header>}>
-            <Banner
-                header="Как подключить бота"
-                subheader="Добавьте бот вашей группы в беседу с персоналом, затем скопируйте ID беседы из URL и вставьте ниже."
-            />
+            <div style={{
+                margin: '8px 16px 4px',
+                padding: '12px 14px',
+                background: '#f0f6ff',
+                borderRadius: 10,
+                borderLeft: '3px solid #2688EB',
+                fontSize: 13,
+                color: '#333',
+                lineHeight: 1.6,
+            }}>
+                <div style={{ fontWeight: 500, marginBottom: 4 }}>Как подключить бота</div>
+                Добавьте бот вашей группы в беседу с персоналом, затем скопируйте ID беседы из URL и вставьте ниже.
+            </div>
 
             <FormItem top="Токен группы (vk_group_token)">
                 <Input
@@ -85,24 +94,18 @@ function StepNotifications({ state, set, back, onFinish }) {
                 </FormItem>
             )}
 
-            {(state.chatId || state.botToken) && !verified && (
+            {(state.chatId && state.botToken) && (
                 <FormItem>
-                    <Button
-                        size="m"
-                        mode="secondary"
-                        onClick={handleVerify}
-                        disabled={verifying}
-                        before={verifying ? <Spinner size="small" /> : null}
-                    >
-                        {verifying ? 'Проверяю...' : 'Проверить подключение'}
-                    </Button>
+                    <span style={{ fontSize: 13, color: '#27ae60' }}>
+                        ✓ Данные сохранены. Проверить подключение можно в настройках после регистрации.
+                    </span>
                 </FormItem>
             )}
 
             {state.loading && (
                 <FormItem>
                     <span style={{ color: 'var(--vkui--color_text_secondary)', fontSize: 13 }}>
-                        <Spinner size="small" /> Регистрируем заведение...
+                        Регистрируем заведение...
                     </span>
                 </FormItem>
             )}

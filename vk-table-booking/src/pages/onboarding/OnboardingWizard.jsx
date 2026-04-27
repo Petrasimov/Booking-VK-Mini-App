@@ -12,6 +12,8 @@ import StepNotifications from './StepNotifications'
 
 const STEPS = ['welcome', 'category', 'info', 'schedule', 'notifications']
 
+const STEP_LABELS = ['', 'Тип', 'Инфо', 'График', 'Уведом.']
+
 const INITIAL_STATE = {
     step:     'welcome',
     category: '',
@@ -73,44 +75,87 @@ function buildConfig(state) {
     }
 }
 
+// ─────────────────────────────────────────────
+// Прогресс-бар (только шаги 1–4, шаг 0 = welcome скрыт)
+// ─────────────────────────────────────────────
 function ProgressBar({ step }) {
-    const idx   = getStepIndex(step)
-    const total = STEPS.length
+    const currentIdx = getStepIndex(step)
+    // Показываем шаги 1-4 (не включая welcome)
+    const visibleSteps = STEPS.slice(1)
+
     return (
-        <div style={{ padding: '12px 16px 0' }}>
-            <div style={{
-                display: 'flex', alignItems: 'center',
-                justifyContent: 'space-between', marginBottom: 6,
-            }}>
-                {STEPS.map((s, i) => (
-                    <div key={s} style={{
-                        width: 28, height: 28, borderRadius: '50%',
-                        display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        fontSize: 13, fontWeight: 500,
-                        background: i <= idx
-                            ? 'var(--vkui--color_accent)'
-                            : 'var(--vkui--color_background_secondary)',
-                        color: i <= idx
-                            ? '#fff'
-                            : 'var(--vkui--color_text_secondary)',
-                        transition: 'background 0.3s',
-                    }}>
-                        {i + 1}
-                    </div>
-                ))}
-            </div>
-            <div style={{
-                height: 3,
-                background: 'var(--vkui--color_background_secondary)',
-                borderRadius: 2,
-            }}>
-                <div style={{
-                    height: '100%',
-                    width: `${(idx / (total - 1)) * 100}%`,
-                    background: 'var(--vkui--color_accent)',
-                    borderRadius: 2,
-                    transition: 'width 0.3s',
-                }} />
+        <div style={{ padding: '16px 16px 0' }}>
+            <div style={{ display: 'flex', alignItems: 'center' }}>
+                {visibleSteps.map((s, i) => {
+                    const stepIdx   = i + 1  // реальный индекс в STEPS
+                    const isDone    = stepIdx < currentIdx
+                    const isCurrent = stepIdx === currentIdx
+                    const isFuture  = stepIdx > currentIdx
+
+                    return (
+                        <div key={s} style={{ display: 'flex', alignItems: 'center', flex: i < visibleSteps.length - 1 ? 1 : 'none' }}>
+                            {/* Круг с номером */}
+                            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4 }}>
+                                <div style={{
+                                    width:        32,
+                                    height:       32,
+                                    borderRadius: '50%',
+                                    display:      'flex',
+                                    alignItems:   'center',
+                                    justifyContent: 'center',
+                                    fontSize:     13,
+                                    fontWeight:   500,
+                                    transition:   'all 0.3s',
+                                    // Цвет зависит от состояния
+                                    background: isDone
+                                        ? '#2688EB'
+                                        : isCurrent
+                                        ? '#2688EB'
+                                        : 'var(--vkui--color_background_secondary)',
+                                    color: isDone || isCurrent
+                                        ? '#ffffff'
+                                        : 'var(--vkui--color_text_secondary)',
+                                    // Текущий шаг — чуть крупнее и с кольцом
+                                    boxShadow: isCurrent
+                                        ? '0 0 0 3px rgba(38,136,235,0.25)'
+                                        : 'none',
+                                }}>
+                                    {isDone
+                                        ? <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                                            <path d="M2.5 7L5.5 10L11.5 4" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+                                          </svg>
+                                        : stepIdx
+                                    }
+                                </div>
+                                <div style={{
+                                    fontSize:  10,
+                                    color:     isDone || isCurrent
+                                        ? '#2688EB'
+                                        : 'var(--vkui--color_text_secondary)',
+                                    fontWeight: isCurrent ? 500 : 400,
+                                    whiteSpace: 'nowrap',
+                                }}>
+                                    {STEP_LABELS[stepIdx]}
+                                </div>
+                            </div>
+
+                            {/* Линия между шагами */}
+                            {i < visibleSteps.length - 1 && (
+                                <div style={{
+                                    flex:     1,
+                                    height:   2,
+                                    margin:   '0 4px',
+                                    marginBottom: 16,
+                                    borderRadius: 1,
+                                    background: isDone
+                                        ? '#2688EB'
+                                        : 'var(--vkui--color_background_secondary)',
+                                    transition: 'background 0.3s',
+                                }} />
+                            )}
+                        </div>
+                    )
+                })}
             </div>
         </div>
     )
@@ -162,8 +207,7 @@ function OnboardingWizard({ groupId, vkUserId, onComplete }) {
                 throw new Error(err.detail || `Ошибка ${res.status}`)
             }
 
-            // Загружаем конфиг чтобы передать в App
-            const cfgRes = await fetch('/api/config', { headers })
+            const cfgRes  = await fetch('/api/config', { headers })
             const cfgData = cfgRes.ok ? await cfgRes.json() : { config }
 
             onComplete(cfgData)

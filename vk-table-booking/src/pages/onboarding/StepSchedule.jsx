@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import { Button, Checkbox, FormItem, Group, Header, Select } from '@vkontakte/vkui'
+import { Button, FormItem, Group, Header, Select } from '@vkontakte/vkui'
 
 const DAYS = [
     { num: 1, label: 'Пн' }, { num: 2, label: 'Вт' }, { num: 3, label: 'Ср' },
@@ -36,8 +36,10 @@ function StepSchedule({ state, set, next, back }) {
 
     const slotPreview = useMemo(() => {
         const slots = []
-        const [oh, om] = state.openTime.split(':').map(Number)
-        const [ch, cm] = state.closeTime.split(':').map(Number)
+        const [oh] = state.openTime.split(':').map(Number)
+        const [ch] = state.closeTime.split(':').map(Number)
+        const om = parseInt(state.openTime.split(':')[1])
+        const cm = parseInt(state.closeTime.split(':')[1])
         let cur = oh * 60 + om
         const end = ch * 60 + cm
         while (cur + state.slotInterval <= end && slots.length < 5) {
@@ -51,26 +53,36 @@ function StepSchedule({ state, set, next, back }) {
     return (
         <Group header={<Header>Расписание</Header>}>
             <FormItem top="Рабочие дни">
-                <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', padding: '0 0 8px' }}>
-                    {DAYS.map(d => (
-                        <div
-                            key={d.num}
-                            onClick={() => toggleDay(d.num)}
-                            style={{
-                                width: 40, height: 40, borderRadius: 8,
-                                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                cursor: 'pointer', fontSize: 13, fontWeight: 500,
-                                background: state.workingDays.includes(d.num)
-                                    ? 'var(--vkui--color_accent)'
-                                    : 'var(--vkui--color_background_secondary)',
-                                color: state.workingDays.includes(d.num)
-                                    ? '#fff'
-                                    : 'var(--vkui--color_text_primary)',
-                            }}
-                        >
-                            {d.label}
-                        </div>
-                    ))}
+                <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', padding: '4px 0 8px' }}>
+                    {DAYS.map(d => {
+                        const active = state.workingDays.includes(d.num)
+                        return (
+                            <button
+                                key={d.num}
+                                type="button"
+                                onClick={() => toggleDay(d.num)}
+                                style={{
+                                    width:        44,
+                                    height:       44,
+                                    borderRadius: 10,
+                                    border:       active ? '2px solid #2688EB' : '1.5px solid #d1d5db',
+                                    display:      'flex',
+                                    alignItems:   'center',
+                                    justifyContent: 'center',
+                                    cursor:       'pointer',
+                                    fontSize:     13,
+                                    fontWeight:   500,
+                                    background:   active ? '#2688EB' : '#ffffff',
+                                    color:        active ? '#ffffff' : '#333333',
+                                    transition:   'all 0.15s',
+                                    outline:      'none',
+                                    flexShrink:   0,
+                                }}
+                            >
+                                {d.label}
+                            </button>
+                        )
+                    })}
                 </div>
             </FormItem>
 
@@ -100,30 +112,31 @@ function StepSchedule({ state, set, next, back }) {
 
             {slotPreview.length > 0 && (
                 <FormItem top="Первые слоты">
-                    <div style={{
-                        display: 'flex', gap: 6, flexWrap: 'wrap',
-                        padding: '4px 0 8px',
-                    }}>
+                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', padding: '4px 0 8px' }}>
                         {slotPreview.map(s => (
                             <span key={s} style={{
-                                padding: '3px 10px',
-                                background: 'var(--vkui--color_background_secondary)',
-                                borderRadius: 6, fontSize: 13,
+                                padding:      '4px 10px',
+                                background:   '#f0f2f5',
+                                borderRadius: 6,
+                                fontSize:     13,
+                                color:        '#333',
                             }}>
                                 {s}
                             </span>
                         ))}
-                        <span style={{ fontSize: 13, color: 'var(--vkui--color_text_secondary)' }}>
-                            ...
-                        </span>
+                        <span style={{ fontSize: 13, color: '#999', alignSelf: 'center' }}>...</span>
                     </div>
                 </FormItem>
             )}
 
             <div style={{ display: 'flex', gap: 8, padding: '8px 16px' }}>
                 <Button size="l" mode="secondary" stretched onClick={back}>← Назад</Button>
-                <Button size="l" stretched onClick={next}
-                    disabled={state.workingDays.length === 0}>
+                <Button
+                    size="l"
+                    stretched
+                    onClick={next}
+                    disabled={state.workingDays.length === 0}
+                >
                     Далее →
                 </Button>
             </div>

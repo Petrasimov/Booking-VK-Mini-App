@@ -133,7 +133,7 @@ function StatsTab({ headers }) {
                                     labelFormatter={h => `${h}:00`}
                                     formatter={v => [v, 'Броней']}
                                 />
-                                <Bar dataKey="count" fill="var(--vkui--color_accent)" radius={[4,4,0,0]} />
+                                <Bar dataKey="count" fill="var(--vkui--color_accent)" radius={[4,4,0,0]} maxBarSize={60} />
                             </BarChart>
                         </ResponsiveContainer>
                     </div>
