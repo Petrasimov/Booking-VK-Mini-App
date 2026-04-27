@@ -471,9 +471,10 @@ async def export_bookings_csv(
     request: Request,
     db:      AsyncSession = Depends(get_db),
     venue:   Venue        = Depends(require_owner_or_manager),
+    appeared: str | None  = Query(None, description="Фильтр: true | false | null"),
 ):
     """
-    Экспортирует все брони заведения в CSV файл.
+    Экспортирует брони заведения в CSV файл с учётом фильтра appeared.
     Доступно только на тарифе Standard и Pro.
     """
     limits = PLAN_LIMITS.get(venue.plan, PLAN_LIMITS["free"])
@@ -487,6 +488,12 @@ async def export_bookings_csv(
     filters = [Reservation.venue_id == venue.id]
     if cutoff:
         filters.append(Reservation.date >= cutoff)
+    if appeared == "true":
+        filters.append(Reservation.appeared == True)
+    elif appeared == "false":
+        filters.append(Reservation.appeared == False)
+    elif appeared == "null":
+        filters.append(Reservation.appeared == None)
 
     reservations = (await db.execute(
         select(Reservation)

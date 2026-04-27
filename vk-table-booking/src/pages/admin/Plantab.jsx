@@ -2,7 +2,7 @@
  * Вкладка "Тариф" в панели владельца.
  */
 
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { Group, Header, Button, Snackbar, SimpleCell } from '@vkontakte/vkui'
 
 const PLANS = [
@@ -46,10 +46,21 @@ const PLANS = [
 ]
 
 function PlanTab({ headers, venueData }) {
-    const currentPlan = venueData?.plan || 'free'
-    const expiresAt   = venueData?.plan_expires_at
-    const [loading,   setLoading]  = useState(null)
-    const [snackbar,  setSnackbar] = useState(null)
+    const [currentPlan, setCurrentPlan] = useState(venueData?.plan || 'free')
+    const [expiresAt,   setExpiresAt]   = useState(venueData?.plan_expires_at)
+    const [loading,     setLoading]     = useState(null)
+    const [snackbar,    setSnackbar]    = useState(null)
+
+    // Загружаем актуальный тариф при открытии вкладки
+    useEffect(() => {
+        fetch('/api/venue/me', { headers })
+            .then(r => r.json())
+            .then(d => {
+                if (d.plan) setCurrentPlan(d.plan)
+                if (d.plan_expires_at) setExpiresAt(d.plan_expires_at)
+            })
+            .catch(() => {})
+    }, [])
 
     const handleUpgrade = async (planId) => {
         setLoading(planId)

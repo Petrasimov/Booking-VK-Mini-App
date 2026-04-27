@@ -11,9 +11,9 @@ import {
 } from '@vkontakte/vkui'
 
 const STATUS_LABELS = {
-    null:  { label: 'Ожидает', color: '#FFA500' },
-    true:  { label: 'Пришёл',  color: '#4CAF50' },
-    false: { label: 'Не пришёл', color: '#F44336' },
+    null:  { label: 'Ожидает',    color: '#FFA500' },
+    true:  { label: 'Пришёл',     color: '#4CAF50' },
+    false: { label: 'Не пришёл',  color: '#F44336' },
 }
 
 function BookingsTab({ headers, venueData }) {
@@ -42,7 +42,7 @@ function BookingsTab({ headers, venueData }) {
             setTotal(data.total)
             setPages(data.pages || 1)
         } catch (e) {
-            setSnackbar({ text: `Ошибка загрузки: ${e.message}`, type: 'danger' })
+            setSnackbar({ text: `Ошибка загрузки: ${e.message}` })
         } finally {
             setLoading(false)
         }
@@ -50,34 +50,41 @@ function BookingsTab({ headers, venueData }) {
 
     useEffect(() => { fetchBookings() }, [fetchBookings])
 
-    const updateBooking = async (id, appeared) => {
+    const updateBooking = async (id, appearedVal) => {
         try {
             await fetch(`/api/admin/bookings/${id}`, {
                 method:  'PATCH',
                 headers: { ...headers, 'Content-Type': 'application/json' },
-                body:    JSON.stringify({ appeared }),
+                body:    JSON.stringify({ appeared: appearedVal }),
             })
-            setSnackbar({ text: appeared ? '✅ Отмечен пришедшим' : '❌ Отмечен как не пришёл', type: 'default' })
+            setSnackbar({ text: appearedVal ? '✅ Отмечен пришедшим' : '❌ Отмечен как не пришёл' })
             fetchBookings()
         } catch (e) {
-            setSnackbar({ text: `Ошибка: ${e.message}`, type: 'danger' })
+            setSnackbar({ text: `Ошибка: ${e.message}` })
         }
     }
 
     const handleExport = async () => {
         setExporting(true)
         try {
-            const res = await fetch('/api/admin/export/csv', { headers })
+            // Передаём текущий фильтр в экспорт
+            const params = new URLSearchParams()
+            if (appeared) params.set('appeared', appeared)
+
+            const res = await fetch(`/api/admin/export/csv?${params}`, { headers })
             if (!res.ok) throw new Error(`HTTP ${res.status}`)
             const blob = await res.blob()
             const url  = URL.createObjectURL(blob)
             const a    = document.createElement('a')
             a.href     = url
-            a.download = `bookings_${new Date().toISOString().slice(0,10)}.csv`
+
+            // Имя файла отражает примененный фильтр
+            const filterSuffix = appeared ? `_${appeared}` : '_all'
+            a.download = `bookings${filterSuffix}_${new Date().toISOString().slice(0,10)}.csv`
             a.click()
             URL.revokeObjectURL(url)
         } catch (e) {
-            setSnackbar({ text: `Ошибка экспорта: ${e.message}`, type: 'danger' })
+            setSnackbar({ text: `Ошибка экспорта: ${e.message}` })
         } finally {
             setExporting(false)
         }
@@ -86,27 +93,31 @@ function BookingsTab({ headers, venueData }) {
     return (
         <Group>
             {/* Фильтры */}
-            <div style={{ display: 'flex', gap: 8, padding: '8px 16px', alignItems: 'flex-end' }}>
-                <FormItem top="Статус" style={{ flex: 1, margin: 0 }}>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '8px 16px' }}>
+                <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 13, color: 'var(--vkui--color_text_secondary)', marginBottom: 4 }}>
+                        Статус
+                    </div>
                     <Select
                         value={appeared}
                         onChange={e => { setAppeared(e.target.value); setPage(1) }}
                         options={[
-                            { label: 'Все',         value: '' },
-                            { label: 'Ожидает',     value: 'null' },
-                            { label: 'Пришёл',      value: 'true' },
-                            { label: 'Не пришёл',   value: 'false' },
+                            { label: 'Все',       value: '' },
+                            { label: 'Ожидает',   value: 'null' },
+                            { label: 'Пришёл',    value: 'true' },
+                            { label: 'Не пришёл', value: 'false' },
                         ]}
                     />
-                </FormItem>
-                {canExport && (
+                </div>
+                {canExport && appeared === '' && (
                     <Button
-                        size="m" mode="secondary"
+                        size="m"
+                        mode="secondary"
                         onClick={handleExport}
                         loading={exporting}
-                        style={{ marginBottom: 2 }}
+                        style={{ whiteSpace: 'nowrap', marginTop: 20 }}
                     >
-                        📥 CSV
+                        📥 Экспорт CSV
                     </Button>
                 )}
             </div>
@@ -116,7 +127,10 @@ function BookingsTab({ headers, venueData }) {
             </Header>
 
             {loading ? (
-                <div style={{ padding: 32, textAlign: 'center', color: 'var(--vkui--color_text_secondary)' }}>Загрузка...</div>
+                <div style={{ padding: 32, textAlign: 'center',
+                    color: 'var(--vkui--color_text_secondary)' }}>
+                    Загрузка...
+                </div>
             ) : bookings.length === 0 ? (
                 <div style={{ padding: 32, textAlign: 'center',
                     color: 'var(--vkui--color_text_secondary)', fontSize: 14 }}>
